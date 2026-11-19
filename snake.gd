@@ -19,15 +19,21 @@ const MAX_VIES := 3               # plafond de vies pour éviter le farm infini
 const COOLDOWN_VIE := 50.0        # délai minimum (en secondes) entre deux apparitions de Vie
 const DUREE_FANTOME := 6.0        # secondes de Mode Fantôme (traverse murs et corps)
 const DUREE_COMBO_X2 := 10.0      # secondes de Combo x2 (points doublés)
+const DUREE_RALENTI := 6.0        # secondes de Ralenti (Slow-Mo)
+const FACTEUR_RALENTI := 1.75     # multiplicateur de délai pendant le Ralenti
+const PALIER_POINTS_CISEAUX := 15 # un bonus Ciseaux apparaît tous les 15 points
+const REDUCTION_CISEAUX := 5      # nombre de segments coupés par les Ciseaux
+const TAILLE_MIN_SERPENT := 3
 
-enum TypeBonus { BOUCLIER, VIE, FANTOME, COMBO_X2 }
+enum TypeBonus { BOUCLIER, VIE, FANTOME, COMBO_X2, RALENTI, CISEAUX }
 enum EtatJeu { MENU, JEU, PAUSE, GAME_OVER }
 
-# Poids d'apparition par bonus (plus le poids est bas, plus le bonus est rare)
+# Poids d'apparition par bonus aléatoire (Ciseaux apparaît par paliers de 15 pts)
 const POIDS_BONUS := {
-	TypeBonus.BOUCLIER: 35,
-	TypeBonus.FANTOME: 30,
-	TypeBonus.COMBO_X2: 25,
+	TypeBonus.BOUCLIER: 30,
+	TypeBonus.FANTOME: 25,
+	TypeBonus.COMBO_X2: 20,
+	TypeBonus.RALENTI: 15,
 	TypeBonus.VIE: 10,
 }
 
@@ -41,6 +47,8 @@ const COULEUR_BOUCLIER := Color("#38bdf8")
 const COULEUR_VIE := Color("#22c55e")
 const COULEUR_FANTOME := Color("#a855f7")
 const COULEUR_COMBO_X2 := Color("#facc15")
+const COULEUR_RALENTI := Color("#f472b6")
+const COULEUR_CISEAUX := Color("#fb923c")
 const COULEUR_TEXTE := Color("#ffffff")
 const COULEUR_TEXTE_INACTIF := Color("#444444")
 const CHEMIN_SAUVEGARDE := "user://snake_save.cfg"
@@ -51,10 +59,12 @@ var file_directions: Array[Vector2i] = []  # directions demandées, appliquées 
 var nourriture := Vector2i.ZERO
 var bonus_actifs: Array[Dictionary] = []   # [{ "pos": Vector2i, "type": TypeBonus, "temps_restant": float }]
 var cooldown_vie_restant := 0.0            # temps restant avant qu'un bonus Vie puisse réapparaître
+var prochain_palier_ciseaux := PALIER_POINTS_CISEAUX
 var vies := VIES_DEPART
 var a_bouclier := false
 var temps_fantome := 0.0
 var temps_combo_x2 := 0.0
+var temps_ralenti := 0.0
 var score := 0
 var meilleur_score := 0
 var nouveau_record := false
@@ -76,6 +86,8 @@ var son_bouclier: AudioStreamWAV
 var son_vie: AudioStreamWAV
 var son_fantome: AudioStreamWAV
 var son_combo: AudioStreamWAV
+var son_ralenti: AudioStreamWAV
+var son_ciseaux: AudioStreamWAV
 var son_bouclier_brise: AudioStreamWAV
 var son_degat: AudioStreamWAV
 var son_perdu: AudioStreamWAV
@@ -122,6 +134,11 @@ func _process(delta: float) -> void:
 				modifie = true
 			if temps_combo_x2 > 0.0:
 				temps_combo_x2 = maxf(0.0, temps_combo_x2 - delta)
+				modifie = true
+			if temps_ralenti > 0.0:
+				temps_ralenti = maxf(0.0, temps_ralenti - delta)
+				if temps_ralenti == 0.0:
+					_maj_vitesse()
 				modifie = true
 		for i in range(bonus_actifs.size() - 1, -1, -1):
 			bonus_actifs[i]["temps_restant"] -= delta
@@ -228,18 +245,28 @@ func _nouvelle_partie() -> void:
 	alpha_flash = 0.0
 	temps_pause_respawn = 0.0
 	cooldown_vie_restant = 0.0
+	prochain_palier_ciseaux = PALIER_POINTS_CISEAUX
 	vies = VIES_DEPART
 	a_bouclier = false
 	temps_fantome = 0.0
 	temps_combo_x2 = 0.0
+	temps_ralenti = 0.0
 	score = 0
 	nouveau_record = false
 	etat_jeu = EtatJeu.JEU
 	_maj_volume_musique()
 	_placer_nourriture()
-	minuteur.start(DELAI_DEPART)
+	_maj_vitesse()
+	minuteur.start()
 	_planifier_prochain_bonus()
 	queue_redraw()
+
+
+func _maj_vitesse() -> void:
+	var delai := maxf(DELAI_MINIMAL, DELAI_DEPART - score * 0.003)
+	if temps_ralenti > 0.0:
+		delai *= FACTEUR_RALENTI
+	minuteur.wait_time = delai
 
 
 func _planifier_prochain_bonus() -> void:
@@ -414,7 +441,7 @@ func _avancer() -> void:
 		var points := 2 if temps_combo_x2 > 0.0 else 1
 		score += points
 		_verifier_record()
-		minuteur.wait_time = maxf(DELAI_MINIMAL, DELAI_DEPART - score * 0.003)
+		_maj_vitesse()
 		var pos_mange := _centre_case(nouvelle_tete)
 		var couleur_effet := COULEUR_COMBO_X2 if points == 2 else COULEUR_CONSOMMABLE
 		var texte_points := "+2 (x2)" if points == 2 else "+1"
@@ -423,6 +450,7 @@ func _avancer() -> void:
 		_declencher_secousse(2.5)
 		_jouer_son(son_manger_x2 if points == 2 else son_manger, randf_range(0.96, 1.06))
 		_placer_nourriture()
+		_verifier_palier_ciseaux()
 	else:
 		serpent.pop_back()
 
@@ -430,6 +458,21 @@ func _avancer() -> void:
 	_verifier_ramassage_bonus(nouvelle_tete)
 
 	queue_redraw()
+
+
+func _verifier_palier_ciseaux() -> void:
+	if score < prochain_palier_ciseaux:
+		return
+	while score >= prochain_palier_ciseaux:
+		prochain_palier_ciseaux += PALIER_POINTS_CISEAUX
+	var case_libre := _trouver_case_libre()
+	if case_libre != Vector2i(-1, -1):
+		bonus_actifs.append({
+			"pos": case_libre,
+			"type": TypeBonus.CISEAUX,
+			"temps_restant": DUREE_VIE_BONUS,
+		})
+		_creer_particules(_centre_case(case_libre), COULEUR_CISEAUX, 8, 90.0)
 
 
 func _verifier_ramassage_bonus(position_tete: Vector2i) -> void:
@@ -446,6 +489,7 @@ func _verifier_ramassage_bonus(position_tete: Vector2i) -> void:
 					if a_bouclier:
 						score += 2                            # déjà un bouclier : petit bonus de points
 						_verifier_record()
+						_verifier_palier_ciseaux()
 						_creer_texte_flottant(pos_bonus, "+2", COULEUR_BOUCLIER)
 					else:
 						a_bouclier = true
@@ -460,6 +504,7 @@ func _verifier_ramassage_bonus(position_tete: Vector2i) -> void:
 					else:
 						score += 3
 						_verifier_record()
+						_verifier_palier_ciseaux()
 						_creer_texte_flottant(pos_bonus, "+3", COULEUR_VIE)
 				TypeBonus.FANTOME:
 					temps_fantome = DUREE_FANTOME
@@ -475,6 +520,24 @@ func _verifier_ramassage_bonus(position_tete: Vector2i) -> void:
 					_declencher_secousse(3.5)
 					_declencher_flash(COULEUR_COMBO_X2, 0.16)
 					_jouer_son(son_combo)
+				TypeBonus.RALENTI:
+					temps_ralenti = DUREE_RALENTI
+					_maj_vitesse()
+					_creer_particules(pos_bonus, COULEUR_RALENTI, 16, 190.0)
+					_creer_texte_flottant(pos_bonus, "RALENTI !", COULEUR_RALENTI)
+					_declencher_secousse(3.5)
+					_declencher_flash(COULEUR_RALENTI, 0.16)
+					_jouer_son(son_ralenti)
+				TypeBonus.CISEAUX:
+					var coupes := mini(REDUCTION_CISEAUX, maxi(0, serpent.size() - TAILLE_MIN_SERPENT))
+					for _k in coupes:
+						var queue_coupee: Vector2i = serpent.pop_back()
+						_creer_particules(_centre_case(queue_coupee), COULEUR_CISEAUX, 6, 120.0)
+					_creer_particules(pos_bonus, COULEUR_CISEAUX, 14, 180.0)
+					_creer_texte_flottant(pos_bonus, "-%d QUEUE !" % coupes if coupes > 0 else "CISEAUX !", COULEUR_CISEAUX)
+					_declencher_secousse(4.5)
+					_declencher_flash(COULEUR_CISEAUX, 0.14)
+					_jouer_son(son_ciseaux)
 
 
 func _trouver_case_libre(eviter_nourriture := true) -> Vector2i:
@@ -567,6 +630,8 @@ func _initialiser_audio() -> void:
 	son_vie = _creer_son_notes([523.25, 659.25, 783.99, 1046.50], 0.08, 0.38, 1.0)
 	son_fantome = _creer_son_whoosh(340.0, 760.0, 0.36, 0.35)
 	son_combo = _creer_son_notes([587.33, 739.99, 880.0, 1174.66], 0.065, 0.38, 1.0)
+	son_ralenti = _creer_son_notes([783.99, 587.33, 440.0], 0.095, 0.36, 0.94)
+	son_ciseaux = _creer_son_notes([1046.50, 1318.51], 0.04, 0.38, 0.85)
 	son_bouclier_brise = _creer_son_impact(320.0, 95.0, 0.24, 0.28, 0.45)
 	son_degat = _creer_son_impact(180.0, 52.0, 0.32, 0.35, 0.50)
 	son_perdu = _creer_son_notes([392.0, 349.23, 311.13, 261.63], 0.14, 0.40, 0.96)
@@ -694,6 +759,27 @@ func _dessiner_forme_bonus(type_bonus: TypeBonus, centre: Vector2, demi: float) 
 			draw_colored_polygon(triangle, COULEUR_COMBO_X2)
 			var contour_tri := PackedVector2Array([triangle[0], triangle[1], triangle[2], triangle[0]])
 			draw_polyline(contour_tri, COULEUR_TETE, 1.2, true)
+		TypeBonus.RALENTI:
+			# Sablier rose néon (deux triangles opposés)
+			var sablier_haut := PackedVector2Array([
+				centre + Vector2(-demi * 0.85, -demi),
+				centre + Vector2(demi * 0.85, -demi),
+				centre,
+			])
+			var sablier_bas := PackedVector2Array([
+				centre,
+				centre + Vector2(demi * 0.85, demi),
+				centre + Vector2(-demi * 0.85, demi),
+			])
+			draw_colored_polygon(sablier_haut, COULEUR_RALENTI)
+			draw_colored_polygon(sablier_bas, COULEUR_RALENTI)
+			draw_polyline(PackedVector2Array([sablier_haut[0], sablier_haut[1], sablier_bas[2], sablier_bas[1], sablier_haut[0]]), COULEUR_TETE, 1.2, true)
+		TypeBonus.CISEAUX:
+			# Deux lames croisées en X orange néon
+			var d := demi * 0.82
+			draw_line(centre + Vector2(-d, -d), centre + Vector2(d, d), COULEUR_CISEAUX, 3.2, true)
+			draw_line(centre + Vector2(d, -d), centre + Vector2(-d, d), COULEUR_CISEAUX, 3.2, true)
+			draw_circle(centre, 2.2, COULEUR_TETE)
 
 
 func _dessiner_bonus(bonus: Dictionary) -> void:
@@ -789,12 +875,15 @@ func _draw() -> void:
 
 	var statuts_droite: Array[String] = []
 	var couleur_droite := COULEUR_TEXTE_INACTIF
+	if temps_ralenti > 0.0:
+		statuts_droite.append("RALENTI %.0fs" % ceilf(temps_ralenti))
+		couleur_droite = COULEUR_RALENTI
 	if temps_fantome > 0.0:
 		statuts_droite.append("FANTÔME %.0fs" % ceilf(temps_fantome))
 		couleur_droite = COULEUR_FANTOME
 	if a_bouclier:
 		statuts_droite.append("BOUCLIER")
-		if temps_fantome <= 0.0:
+		if temps_fantome <= 0.0 and temps_ralenti <= 0.0:
 			couleur_droite = COULEUR_BOUCLIER
 	var texte_droite := " | ".join(statuts_droite) if not statuts_droite.is_empty() else "POUVOIRS : --"
 	draw_string(police, Vector2(ORIGINE_GRILLE.x, y_hud), texte_droite, HORIZONTAL_ALIGNMENT_RIGHT, largeur_arene, 20, couleur_droite)
@@ -802,48 +891,58 @@ func _draw() -> void:
 	# 11. Écrans d'état (Menu Titre, Pause, Game Over)
 	if etat_jeu == EtatJeu.MENU:
 		draw_rect(rect_arene, Color(0, 0, 0, 0.86))
-		var y_base := ORIGINE_GRILLE.y + 125.0
+		var y_base := ORIGINE_GRILLE.y + 92.0
 		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base), "SNAKE",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 56, COULEUR_TETE)
 		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 32), "ÉDITION NÉON",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 16, COULEUR_CONSOMMABLE)
 		if meilleur_score > 0:
-			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 72), "MEILLEUR SCORE : %d" % meilleur_score,
+			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 68), "MEILLEUR SCORE : %d" % meilleur_score,
 				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 20, COULEUR_COMBO_X2)
 
 		# Légende des consommables
-		var x_legende := ORIGINE_GRILLE.x + largeur_arene * 0.5 - 175.0
-		var y_leg := y_base + 128.0
-		var pas_y := 38.0
+		var x_legende := ORIGINE_GRILLE.x + largeur_arene * 0.5 - 185.0
+		var y_leg := y_base + 114.0
+		var pas_y := 34.0
 		var demi_icone := 10.0
 
 		# Nourriture
 		draw_rect(Rect2(x_legende - demi_icone, y_leg - demi_icone - 5.0, demi_icone * 2.0, demi_icone * 2.0), COULEUR_CONSOMMABLE)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Nourriture  —  +1 pt (grandit et accélère)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_TEXTE)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Nourriture  —  +1 pt (grandit et accélère)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_TEXTE)
 
 		# Bouclier
 		y_leg += pas_y
 		_dessiner_forme_bonus(TypeBonus.BOUCLIER, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Bouclier  —  Absorbe 1 collision", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_BOUCLIER)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Bouclier  —  Absorbe 1 collision", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_BOUCLIER)
 
 		# Fantôme
 		y_leg += pas_y
 		_dessiner_forme_bonus(TypeBonus.FANTOME, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Fantôme  —  Traverse murs et corps (6s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_FANTOME)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Fantôme  —  Traverse murs et corps (6s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_FANTOME)
 
 		# Combo x2
 		y_leg += pas_y
 		_dessiner_forme_bonus(TypeBonus.COMBO_X2, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Combo x2  —  Points doublés (10s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_COMBO_X2)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Combo x2  —  Points doublés (10s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_COMBO_X2)
+
+		# Ralenti
+		y_leg += pas_y
+		_dessiner_forme_bonus(TypeBonus.RALENTI, Vector2(x_legende, y_leg - 5.0), demi_icone)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ralenti  —  Ralentit le serpent (6s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_RALENTI)
+
+		# Ciseaux
+		y_leg += pas_y
+		_dessiner_forme_bonus(TypeBonus.CISEAUX, Vector2(x_legende, y_leg - 5.0), demi_icone)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ciseaux  —  Coupe 5 segments (tous les 15 pts)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_CISEAUX)
 
 		# Vie
 		y_leg += pas_y
 		_dessiner_forme_bonus(TypeBonus.VIE, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Vie +1  —  Respawn au centre (max 3)", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_VIE)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Vie +1  —  Respawn au centre (max 3)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_VIE)
 
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 100.0), "APPUIE SUR ENTRÉE OU ESPACE POUR JOUER",
+		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 84.0), "APPUIE SUR ENTRÉE OU ESPACE POUR JOUER",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 22, COULEUR_TETE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 66.0), "Flèches ou ZQSD pour diriger   •   P ou Échap pour Pause",
+		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 52.0), "Flèches ou ZQSD pour diriger   •   P ou Échap pour Pause",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 15, COULEUR_TEXTE_INACTIF.lightened(0.4))
 
 	elif etat_jeu == EtatJeu.PAUSE:
