@@ -20,6 +20,7 @@ const COOLDOWN_VIE := 50.0        # délai minimum (en secondes) entre deux appa
 const DUREE_FANTOME := 6.0        # secondes de Mode Fantôme (traverse murs et corps)
 const DUREE_COMBO_X2 := 10.0      # secondes de Combo x2 (points doublés)
 const DUREE_RALENTI := 6.0        # secondes de Ralenti (Slow-Mo)
+const INTERVALLE_RALENTI := 60.0  # un bonus Ralenti apparaît toutes les 60 secondes
 const FACTEUR_RALENTI := 1.75     # multiplicateur de délai pendant le Ralenti
 const PALIER_POINTS_CISEAUX := 15 # un bonus Ciseaux apparaît tous les 15 points
 const REDUCTION_CISEAUX := 5      # nombre de segments coupés par les Ciseaux
@@ -28,12 +29,11 @@ const TAILLE_MIN_SERPENT := 3
 enum TypeBonus { BOUCLIER, VIE, FANTOME, COMBO_X2, RALENTI, CISEAUX }
 enum EtatJeu { MENU, JEU, PAUSE, GAME_OVER }
 
-# Poids d'apparition par bonus aléatoire (Ciseaux apparaît par paliers de 15 pts)
+# Poids d'apparition par bonus aléatoire (Ciseaux chaque 15 pts, Ralenti chaque 1 min)
 const POIDS_BONUS := {
-	TypeBonus.BOUCLIER: 30,
-	TypeBonus.FANTOME: 25,
-	TypeBonus.COMBO_X2: 20,
-	TypeBonus.RALENTI: 15,
+	TypeBonus.BOUCLIER: 35,
+	TypeBonus.FANTOME: 30,
+	TypeBonus.COMBO_X2: 25,
 	TypeBonus.VIE: 10,
 }
 
@@ -59,6 +59,7 @@ var file_directions: Array[Vector2i] = []  # directions demandées, appliquées 
 var nourriture := Vector2i.ZERO
 var bonus_actifs: Array[Dictionary] = []   # [{ "pos": Vector2i, "type": TypeBonus, "temps_restant": float }]
 var cooldown_vie_restant := 0.0            # temps restant avant qu'un bonus Vie puisse réapparaître
+var temps_prochain_ralenti := INTERVALLE_RALENTI
 var prochain_palier_ciseaux := PALIER_POINTS_CISEAUX
 var vies := VIES_DEPART
 var a_bouclier := false
@@ -132,6 +133,18 @@ func _process(delta: float) -> void:
 	if etat_jeu == EtatJeu.JEU:
 		if cooldown_vie_restant > 0.0:
 			cooldown_vie_restant = maxf(0.0, cooldown_vie_restant - delta)
+		temps_prochain_ralenti -= delta
+		if temps_prochain_ralenti <= 0.0:
+			temps_prochain_ralenti += INTERVALLE_RALENTI
+			var case_ralenti := _trouver_case_libre()
+			if case_ralenti != Vector2i(-1, -1):
+				bonus_actifs.append({
+					"pos": case_ralenti,
+					"type": TypeBonus.RALENTI,
+					"temps_restant": DUREE_VIE_BONUS,
+				})
+				_creer_particules(_centre_case(case_ralenti), COULEUR_RALENTI, 8, 90.0)
+				modifie = true
 		if temps_pause_respawn <= 0.0:
 			if temps_fantome > 0.0:
 				temps_fantome = maxf(0.0, temps_fantome - delta)
@@ -249,6 +262,7 @@ func _nouvelle_partie() -> void:
 	alpha_flash = 0.0
 	temps_pause_respawn = 0.0
 	cooldown_vie_restant = 0.0
+	temps_prochain_ralenti = INTERVALLE_RALENTI
 	prochain_palier_ciseaux = PALIER_POINTS_CISEAUX
 	vies = VIES_DEPART
 	a_bouclier = false
@@ -933,7 +947,7 @@ func _draw() -> void:
 		# Ralenti
 		y_leg += pas_y
 		_dessiner_forme_bonus(TypeBonus.RALENTI, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ralenti  —  Ralentit le serpent (6s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_RALENTI)
+		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ralenti  —  Ralentit 6s (toutes les 1 min)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_RALENTI)
 
 		# Ciseaux
 		y_leg += pas_y
