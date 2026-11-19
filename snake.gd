@@ -92,7 +92,9 @@ var son_bouclier_brise: AudioStreamWAV
 var son_degat: AudioStreamWAV
 var son_perdu: AudioStreamWAV
 
-# Effets visuels / Jutosité (Game Feel)
+# Effets visuels / Jutosité (Game Feel) & Polices
+var police_ui: Font
+var police_titre: Font
 var particules: Array[Dictionary] = []        # [{ "pos": Vector2, "vel": Vector2, "taille": float, "couleur": Color, "vie": float, "vie_max": float }]
 var textes_flottants: Array[Dictionary] = []  # [{ "pos": Vector2, "texte": String, "couleur": Color, "vie": float, "vie_max": float }]
 var intensite_secousse := 0.0
@@ -103,6 +105,8 @@ var temps_pause_respawn := 0.0                # micro-pause avec clignotement ap
 
 func _ready() -> void:
 	RenderingServer.set_default_clear_color(COULEUR_FOND)
+	police_ui = load("res://fonts/FiraMono-Bold.otf") if ResourceLoader.exists("res://fonts/FiraMono-Bold.otf") else ThemeDB.fallback_font
+	police_titre = load("res://fonts/FiraSansCondensed-Heavy.otf") if ResourceLoader.exists("res://fonts/FiraSansCondensed-Heavy.otf") else police_ui
 	_charger_meilleur_score()
 	_initialiser_audio()
 	minuteur = Timer.new()
@@ -798,7 +802,8 @@ func _draw() -> void:
 	var largeur_arene := COLONNES * TAILLE_CASE
 	var hauteur_arene := LIGNES * TAILLE_CASE
 	var rect_arene := Rect2(ORIGINE_GRILLE, Vector2(largeur_arene, hauteur_arene))
-	var police := ThemeDB.fallback_font
+	var police := police_ui if police_ui != null else ThemeDB.fallback_font
+	var titre_font := police_titre if police_titre != null else police
 
 	# Appliquer la secousse d'écran à l'arène et aux effets
 	var decalage_secousse := Vector2.ZERO
@@ -892,8 +897,8 @@ func _draw() -> void:
 	if etat_jeu == EtatJeu.MENU:
 		draw_rect(rect_arene, Color(0, 0, 0, 0.86))
 		var y_base := ORIGINE_GRILLE.y + 92.0
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base), "SNAKE",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 56, COULEUR_TETE)
+		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_base), "SNAKE",
+			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 62, COULEUR_TETE)
 		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 32), "ÉDITION NÉON",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 16, COULEUR_CONSOMMABLE)
 		if meilleur_score > 0:
@@ -948,16 +953,16 @@ func _draw() -> void:
 	elif etat_jeu == EtatJeu.PAUSE:
 		draw_rect(rect_arene, Color(0, 0, 0, 0.72))
 		var y_centre := ORIGINE_GRILLE.y + hauteur_arene * 0.5
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre - 18), "PAUSE",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 40, COULEUR_TETE)
+		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_centre - 18), "PAUSE",
+			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 46, COULEUR_TETE)
 		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 24), "P ou Échap pour reprendre   •   Entrée pour recommencer",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 18, COULEUR_TEXTE_INACTIF.lightened(0.4))
 
 	elif etat_jeu == EtatJeu.GAME_OVER:
 		draw_rect(rect_arene, Color(0, 0, 0, 0.75))
 		var y_centre := ORIGINE_GRILLE.y + hauteur_arene * 0.5
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre - 28), "PERDU",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 40, COULEUR_CONSOMMABLE)
+		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_centre - 28), "PERDU",
+			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 48, COULEUR_CONSOMMABLE)
 		if nouveau_record:
 			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 8), "NOUVEAU RECORD : %d !" % meilleur_score,
 				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 22, COULEUR_COMBO_X2)
