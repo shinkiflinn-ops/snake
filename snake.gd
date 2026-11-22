@@ -26,8 +26,15 @@ const PALIER_POINTS_CISEAUX := 15 # un bonus Ciseaux apparaît tous les 15 point
 const REDUCTION_CISEAUX := 5      # nombre de segments coupés par les Ciseaux
 const TAILLE_MIN_SERPENT := 3
 
+# Paramètres du mode Difficile (serpents ennemis par paires toutes les 90 s)
+const INTERVALLE_ENNEMIS := 90.0
+const DUREE_ALERTE_ENNEMIS := 2.5
+const DELAI_PAS_ENNEMI := 0.095
+const LONGUEUR_SERPENT_ENNEMI := 9
+
 enum TypeBonus { BOUCLIER, VIE, FANTOME, COMBO_X2, RALENTI, CISEAUX }
 enum EtatJeu { MENU, JEU, PAUSE, GAME_OVER }
+enum Difficulte { FACILE, DIFFICILE }
 
 # Poids d'apparition par bonus aléatoire (Ciseaux chaque 15 pts, Ralenti chaque 1 min)
 const POIDS_BONUS := {
@@ -49,6 +56,8 @@ const COULEUR_FANTOME := Color("#a855f7")
 const COULEUR_COMBO_X2 := Color("#facc15")
 const COULEUR_RALENTI := Color("#f472b6")
 const COULEUR_CISEAUX := Color("#fb923c")
+const COULEUR_ENNEMI_TETE := Color("#ff2a2a")
+const COULEUR_ENNEMI_CORPS := Color("#991b1b")
 const COULEUR_TEXTE := Color("#ffffff")
 const COULEUR_TEXTE_INACTIF := Color("#444444")
 const CHEMIN_SAUVEGARDE := "user://snake_save.cfg"
@@ -66,8 +75,18 @@ var a_bouclier := false
 var temps_fantome := 0.0
 var temps_combo_x2 := 0.0
 var temps_ralenti := 0.0
+var difficulte := Difficulte.FACILE
+var serpents_ennemis: Array[Dictionary] = [] # [{ "segments": Array[Vector2i], "dir": Vector2i }]
+var alertes_ennemis: Array[Dictionary] = []  # [{ "entree": Vector2i, "dir": Vector2i, "temps_restant": float }]
+var temps_prochaine_vague := INTERVALLE_ENNEMIS
+var timer_pas_ennemi := 0.0
+var temps_immunite_collision := 0.0
 var score := 0
 var meilleur_score := 0
+var meilleurs_scores := {
+	Difficulte.FACILE: 0,
+	Difficulte.DIFFICILE: 0,
+}
 var nouveau_record := false
 var etat_jeu := EtatJeu.MENU
 var minuteur: Timer
@@ -92,6 +111,7 @@ var son_ciseaux: AudioStreamWAV
 var son_bouclier_brise: AudioStreamWAV
 var son_degat: AudioStreamWAV
 var son_perdu: AudioStreamWAV
+var son_alerte: AudioStreamWAV
 
 # Effets visuels / Jutosité (Game Feel) & Polices
 var police_ui: Font
@@ -157,6 +177,31 @@ func _process(delta: float) -> void:
 				if temps_ralenti == 0.0:
 					_maj_vitesse()
 				modifie = true
+			if temps_immunite_collision > 0.0:
+				temps_immunite_collision = maxf(0.0, temps_immunite_collision - delta)
+			if difficulte == Difficulte.DIFFICILE:
+				if temps_prochaine_vague > 0.0:
+					temps_prochaine_vague -= delta
+					if temps_prochaine_vague <= 0.0:
+						temps_prochaine_vague += INTERVALLE_ENNEMIS
+						_preparer_vague_ennemis()
+						modifie = true
+				for j in range(alertes_ennemis.size() - 1, -1, -1):
+					alertes_ennemis[j]["temps_restant"] -= delta
+					if alertes_ennemis[j]["temps_restant"] <= 0.0:
+						var alerte: Dictionary = alertes_ennemis[j]
+						alertes_ennemis.remove_at(j)
+						_faire_apparaitre_serpent_ennemi(alerte["entree"], alerte["dir"])
+					modifie = true
+				if not serpents_ennemis.is_empty():
+					var pas_ennemi := DELAI_PAS_ENNEMI * (FACTEUR_RALENTI if temps_ralenti > 0.0 else 1.0)
+					timer_pas_ennemi += delta
+					while timer_pas_ennemi >= pas_ennemi:
+						timer_pas_ennemi -= pas_ennemi
+						_avancer_ennemis()
+						modifie = true
+						if etat_jeu != EtatJeu.JEU or temps_pause_respawn > 0.0:
+							break
 		for i in range(bonus_actifs.size() - 1, -1, -1):
 			bonus_actifs[i]["temps_restant"] -= delta
 			if bonus_actifs[i]["temps_restant"] <= 0.0:
@@ -256,6 +301,8 @@ func _reinitialiser_serpent() -> void:
 func _nouvelle_partie() -> void:
 	_reinitialiser_serpent()
 	bonus_actifs.clear()
+	serpents_ennemis.clear()
+	alertes_ennemis.clear()
 	particules.clear()
 	textes_flottants.clear()
 	intensite_secousse = 0.0
@@ -263,6 +310,9 @@ func _nouvelle_partie() -> void:
 	temps_pause_respawn = 0.0
 	cooldown_vie_restant = 0.0
 	temps_prochain_ralenti = INTERVALLE_RALENTI
+	temps_prochaine_vague = INTERVALLE_ENNEMIS
+	timer_pas_ennemi = 0.0
+	temps_immunite_collision = 0.0
 	prochain_palier_ciseaux = PALIER_POINTS_CISEAUX
 	vies = VIES_DEPART
 	a_bouclier = false
@@ -270,6 +320,7 @@ func _nouvelle_partie() -> void:
 	temps_combo_x2 = 0.0
 	temps_ralenti = 0.0
 	score = 0
+	meilleur_score = int(meilleurs_scores[difficulte])
 	nouveau_record = false
 	etat_jeu = EtatJeu.JEU
 	_maj_volume_musique()
@@ -355,7 +406,19 @@ func _unhandled_input(evenement: InputEvent) -> void:
 	if not (evenement is InputEventKey and evenement.pressed and not evenement.echo):
 		return
 
-	if etat_jeu == EtatJeu.MENU or etat_jeu == EtatJeu.GAME_OVER:
+	if etat_jeu == EtatJeu.MENU:
+		if evenement.physical_keycode in [KEY_LEFT, KEY_A, KEY_RIGHT, KEY_D]:
+			difficulte = Difficulte.DIFFICILE if difficulte == Difficulte.FACILE else Difficulte.FACILE
+			meilleur_score = int(meilleurs_scores[difficulte])
+			_jouer_son(son_demarrer, 1.15 if difficulte == Difficulte.DIFFICILE else 0.9)
+			queue_redraw()
+			return
+		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
+			_jouer_son(son_demarrer)
+			_nouvelle_partie()
+		return
+
+	if etat_jeu == EtatJeu.GAME_OVER:
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
 			_jouer_son(son_demarrer)
 			_nouvelle_partie()
@@ -410,17 +473,19 @@ func _avancer() -> void:
 	var corps: Array = serpent if mange else serpent.slice(0, serpent.size() - 1)
 	var touche_mur := nouvelle_tete.x < 0 or nouvelle_tete.x >= COLONNES or nouvelle_tete.y < 0 or nouvelle_tete.y >= LIGNES
 	var touche_corps := nouvelle_tete in corps
+	var touche_ennemi := temps_immunite_collision <= 0.0 and _case_sur_ennemi(nouvelle_tete)
 
-	if touche_mur or touche_corps:
+	if touche_mur or touche_corps or touche_ennemi:
 		var pos_impact := _centre_case(serpent[0])
 		if temps_fantome > 0.0:
-			# Mode Fantôme : traverse librement son corps et passe de l'autre côté des murs
+			# Mode Fantôme : traverse librement son corps, les ennemis et passe de l'autre côté des murs
 			if touche_mur:
 				nouvelle_tete = Vector2i(posmod(nouvelle_tete.x, COLONNES), posmod(nouvelle_tete.y, LIGNES))
 				mange = nouvelle_tete == nourriture
 		elif a_bouclier:
-			# Le bouclier absorbe la collision : on traverse le corps ou on passe de l'autre côté du mur
+			# Le bouclier absorbe la collision : on traverse le corps/ennemi ou on passe de l'autre côté du mur
 			a_bouclier = false
+			temps_immunite_collision = 0.45
 			_creer_particules(pos_impact, COULEUR_BOUCLIER, 18, 220.0)
 			_creer_particules(pos_impact, COULEUR_TETE, 8, 150.0)
 			_creer_texte_flottant(pos_impact, "BOUCLIER BRISÉ !", COULEUR_BOUCLIER)
@@ -433,6 +498,8 @@ func _avancer() -> void:
 		elif vies > 1:
 			# On perd une vie et on réapparaît au centre avec une micro-pause lisible
 			vies -= 1
+			serpents_ennemis.clear()
+			alertes_ennemis.clear()
 			_creer_particules(pos_impact, COULEUR_CONSOMMABLE, 18, 220.0)
 			_creer_particules(pos_impact, COULEUR_TETE, 10, 160.0)
 			_declencher_secousse(11.0)
@@ -558,10 +625,110 @@ func _verifier_ramassage_bonus(position_tete: Vector2i) -> void:
 					_jouer_son(son_ciseaux)
 
 
+func _preparer_vague_ennemis() -> void:
+	var horizontal := randi() % 2 == 0
+	if horizontal:
+		var y1 := randi_range(2, LIGNES - 3)
+		var y2 := posmod(y1 + randi_range(5, 10), LIGNES - 4) + 2
+		if y2 == y1:
+			y2 = posmod(y1 + 6, LIGNES - 4) + 2
+		alertes_ennemis.append({"entree": Vector2i(0, y1), "dir": Vector2i.RIGHT, "temps_restant": DUREE_ALERTE_ENNEMIS})
+		alertes_ennemis.append({"entree": Vector2i(COLONNES - 1, y2), "dir": Vector2i.LEFT, "temps_restant": DUREE_ALERTE_ENNEMIS})
+	else:
+		var x1 := randi_range(2, COLONNES - 3)
+		var x2 := posmod(x1 + randi_range(6, 12), COLONNES - 4) + 2
+		if x2 == x1:
+			x2 = posmod(x1 + 8, COLONNES - 4) + 2
+		alertes_ennemis.append({"entree": Vector2i(x1, 0), "dir": Vector2i.DOWN, "temps_restant": DUREE_ALERTE_ENNEMIS})
+		alertes_ennemis.append({"entree": Vector2i(x2, LIGNES - 1), "dir": Vector2i.UP, "temps_restant": DUREE_ALERTE_ENNEMIS})
+	_jouer_son(son_alerte)
+
+
+func _faire_apparaitre_serpent_ennemi(entree: Vector2i, dir: Vector2i) -> void:
+	var segments: Array[Vector2i] = []
+	for k in LONGUEUR_SERPENT_ENNEMI:
+		segments.append(entree - dir * k)
+	serpents_ennemis.append({
+		"segments": segments,
+		"dir": dir,
+	})
+
+
+func _est_dans_grille(c: Vector2i) -> bool:
+	return c.x >= 0 and c.x < COLONNES and c.y >= 0 and c.y < LIGNES
+
+
+func _avancer_ennemis() -> void:
+	for i in range(serpents_ennemis.size() - 1, -1, -1):
+		var ennemi: Dictionary = serpents_ennemis[i]
+		var segments: Array[Vector2i] = ennemi["segments"]
+		var dir: Vector2i = ennemi["dir"]
+		var nouvelle_tete := segments[0] + dir
+		segments.push_front(nouvelle_tete)
+		segments.pop_back()
+
+		var encore_visible := false
+		for seg in segments:
+			if _est_dans_grille(seg):
+				encore_visible = true
+				break
+		if not encore_visible:
+			serpents_ennemis.remove_at(i)
+			continue
+
+		if temps_fantome <= 0.0 and temps_immunite_collision <= 0.0 and nouvelle_tete == serpent[0]:
+			_gerer_collision_ennemi()
+			if etat_jeu != EtatJeu.JEU or temps_pause_respawn > 0.0:
+				return
+
+
+func _case_sur_ennemi(case_pos: Vector2i) -> bool:
+	for ennemi in serpents_ennemis:
+		if case_pos in ennemi["segments"]:
+			return true
+	return false
+
+
+func _gerer_collision_ennemi() -> void:
+	var pos_impact := _centre_case(serpent[0])
+	if a_bouclier:
+		a_bouclier = false
+		temps_immunite_collision = 0.45
+		_creer_particules(pos_impact, COULEUR_BOUCLIER, 18, 220.0)
+		_creer_particules(pos_impact, COULEUR_TETE, 8, 150.0)
+		_creer_texte_flottant(pos_impact, "BOUCLIER BRISÉ !", COULEUR_BOUCLIER)
+		_declencher_secousse(8.0)
+		_declencher_flash(COULEUR_BOUCLIER, 0.22)
+		_jouer_son(son_bouclier_brise)
+	elif vies > 1:
+		vies -= 1
+		serpents_ennemis.clear()
+		alertes_ennemis.clear()
+		_creer_particules(pos_impact, COULEUR_CONSOMMABLE, 18, 220.0)
+		_creer_particules(pos_impact, COULEUR_TETE, 10, 160.0)
+		_declencher_secousse(11.0)
+		_declencher_flash(COULEUR_CONSOMMABLE, 0.30)
+		_jouer_son(son_degat)
+		_reinitialiser_serpent()
+		_creer_texte_flottant(_centre_case(serpent[0]), "-1 VIE !", COULEUR_CONSOMMABLE)
+		minuteur.stop()
+		temps_pause_respawn = 0.65
+	else:
+		vies = 0
+		_creer_particules(pos_impact, COULEUR_CONSOMMABLE, 22, 240.0)
+		_creer_particules(pos_impact, COULEUR_TETE, 14, 180.0)
+		_declencher_secousse(13.0)
+		_declencher_flash(COULEUR_CONSOMMABLE, 0.35)
+		_finir_partie()
+
+
 func _trouver_case_libre(eviter_nourriture := true) -> Vector2i:
 	var occupees := {}
 	for segment in serpent:
 		occupees[segment] = true
+	for ennemi in serpents_ennemis:
+		for seg in ennemi["segments"]:
+			occupees[seg] = true
 	if eviter_nourriture:
 		occupees[nourriture] = true
 	for bonus in bonus_actifs:
@@ -590,18 +757,22 @@ func _placer_nourriture() -> void:
 func _charger_meilleur_score() -> void:
 	var config := ConfigFile.new()
 	if config.load(CHEMIN_SAUVEGARDE) == OK:
-		meilleur_score = int(config.get_value("scores", "meilleur", 0))
+		meilleurs_scores[Difficulte.FACILE] = int(config.get_value("scores", "facile", config.get_value("scores", "meilleur", 0)))
+		meilleurs_scores[Difficulte.DIFFICILE] = int(config.get_value("scores", "difficile", 0))
+	meilleur_score = int(meilleurs_scores[difficulte])
 
 
 func _sauvegarder_meilleur_score() -> void:
 	var config := ConfigFile.new()
-	config.set_value("scores", "meilleur", meilleur_score)
+	config.set_value("scores", "facile", meilleurs_scores[Difficulte.FACILE])
+	config.set_value("scores", "difficile", meilleurs_scores[Difficulte.DIFFICILE])
 	config.save(CHEMIN_SAUVEGARDE)
 
 
 func _verifier_record() -> void:
 	if score > meilleur_score:
 		meilleur_score = score
+		meilleurs_scores[difficulte] = score
 		nouveau_record = true
 
 
@@ -653,6 +824,7 @@ func _initialiser_audio() -> void:
 	son_bouclier_brise = _creer_son_impact(320.0, 95.0, 0.24, 0.28, 0.45)
 	son_degat = _creer_son_impact(180.0, 52.0, 0.32, 0.35, 0.50)
 	son_perdu = _creer_son_notes([392.0, 349.23, 311.13, 261.63], 0.14, 0.40, 0.96)
+	son_alerte = _creer_son_notes([880.0, 880.0], 0.14, 0.36, 1.0)
 
 
 func _jouer_son(flux: AudioStreamWAV, pitch := 1.0) -> void:
@@ -838,6 +1010,33 @@ func _draw() -> void:
 	for bonus in bonus_actifs:
 		_dessiner_bonus(bonus)
 
+	# 4b. Alertes d'arrivée des serpents ennemis (mode Difficile)
+	for alerte in alertes_ennemis:
+		var t_alerte: float = alerte["temps_restant"]
+		var entree: Vector2i = alerte["entree"]
+		var dir_ennemi: Vector2i = alerte["dir"]
+		var centre_entree := _centre_case(entree)
+		# Ligne de trajectoire discrète
+		var fin_ligne := centre_entree + Vector2(dir_ennemi) * float(maxi(COLONNES, LIGNES) * TAILLE_CASE)
+		fin_ligne.x = clampf(fin_ligne.x, ORIGINE_GRILLE.x, ORIGINE_GRILLE.x + largeur_arene)
+		fin_ligne.y = clampf(fin_ligne.y, ORIGINE_GRILLE.y, ORIGINE_GRILLE.y + hauteur_arene)
+		draw_line(centre_entree, fin_ligne, Color(COULEUR_ENNEMI_TETE.r, COULEUR_ENNEMI_TETE.g, COULEUR_ENNEMI_TETE.b, 0.22), 2.0)
+		if int(t_alerte * 8.0) % 2 == 0:
+			draw_rect(Rect2(ORIGINE_GRILLE + Vector2(entree) * TAILLE_CASE + Vector2(2, 2), Vector2(TAILLE_CASE - 4, TAILLE_CASE - 4)), COULEUR_ENNEMI_TETE, false, 2.0)
+			draw_string(police, Vector2(centre_entree.x - 10.0, centre_entree.y + 6.0), "!", HORIZONTAL_ALIGNMENT_CENTER, 20.0, 18, COULEUR_ENNEMI_TETE)
+
+	# 4c. Serpents ennemis (mode Difficile)
+	for ennemi in serpents_ennemis:
+		var segs: Array[Vector2i] = ennemi["segments"]
+		for k in segs.size():
+			if not _est_dans_grille(segs[k]):
+				continue
+			var couleur_e := COULEUR_ENNEMI_TETE if k == 0 else COULEUR_ENNEMI_CORPS
+			var rect_e := Rect2(ORIGINE_GRILLE + Vector2(segs[k]) * TAILLE_CASE + Vector2(1, 1), Vector2(TAILLE_CASE - 2, TAILLE_CASE - 2))
+			draw_rect(rect_e, couleur_e)
+			if k == 0:
+				draw_rect(rect_e, COULEUR_TETE, false, 1.5)
+
 	# 5. Serpent (clignote pendant la micro-pause après respawn, translucide violet en Mode Fantôme)
 	var afficher_serpent := temps_pause_respawn <= 0.0 or int(temps_pause_respawn * 14.0) % 2 == 0
 	var en_fantome := temps_fantome > 0.0
@@ -894,6 +1093,13 @@ func _draw() -> void:
 
 	var statuts_droite: Array[String] = []
 	var couleur_droite := COULEUR_TEXTE_INACTIF
+	if difficulte == Difficulte.DIFFICILE:
+		if not alertes_ennemis.is_empty() or not serpents_ennemis.is_empty():
+			statuts_droite.append("ALERTE !")
+			couleur_droite = COULEUR_ENNEMI_TETE
+		else:
+			statuts_droite.append("VAGUE %.0fs" % ceilf(temps_prochaine_vague))
+			couleur_droite = COULEUR_TEXTE
 	if temps_ralenti > 0.0:
 		statuts_droite.append("RALENTI %.0fs" % ceilf(temps_ralenti))
 		couleur_droite = COULEUR_RALENTI
@@ -910,19 +1116,33 @@ func _draw() -> void:
 	# 11. Écrans d'état (Menu Titre, Pause, Game Over)
 	if etat_jeu == EtatJeu.MENU:
 		draw_rect(rect_arene, Color(0, 0, 0, 0.86))
-		var y_base := ORIGINE_GRILLE.y + 92.0
+		var y_base := ORIGINE_GRILLE.y + 68.0
 		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_base), "SNAKE",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 62, COULEUR_TETE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 32), "ÉDITION NÉON",
+		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 30), "ÉDITION NÉON",
 			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 16, COULEUR_CONSOMMABLE)
+
+		# Sélecteur de difficulté (FACILE / DIFFICILE)
+		var y_diff := y_base + 66.0
+		var label_facile := "[ FACILE ]" if difficulte == Difficulte.FACILE else "  FACILE  "
+		var label_difficile := "[ DIFFICILE ]" if difficulte == Difficulte.DIFFICILE else "  DIFFICILE  "
+		var centre_x := ORIGINE_GRILLE.x + largeur_arene * 0.5
+		draw_string(police, Vector2(centre_x - 210.0, y_diff), label_facile,
+			HORIZONTAL_ALIGNMENT_RIGHT, 190.0, 20, COULEUR_VIE if difficulte == Difficulte.FACILE else COULEUR_TEXTE_INACTIF)
+		draw_string(police, Vector2(centre_x + 20.0, y_diff), label_difficile,
+			HORIZONTAL_ALIGNMENT_LEFT, 210.0, 20, COULEUR_ENNEMI_TETE if difficulte == Difficulte.DIFFICILE else COULEUR_TEXTE_INACTIF)
+		var desc_diff := "Classique sans ennemis" if difficulte == Difficulte.FACILE else "2 serpents ennemis traversent toutes les 90s"
+		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_diff + 24.0), desc_diff + "   (◀ ▶ pour changer)",
+			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 14, COULEUR_TEXTE_INACTIF.lightened(0.45))
+
 		if meilleur_score > 0:
-			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 68), "MEILLEUR SCORE : %d" % meilleur_score,
-				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 20, COULEUR_COMBO_X2)
+			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_diff + 50.0), "MEILLEUR SCORE : %d" % meilleur_score,
+				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 18, COULEUR_COMBO_X2)
 
 		# Légende des consommables
 		var x_legende := ORIGINE_GRILLE.x + largeur_arene * 0.5 - 185.0
-		var y_leg := y_base + 114.0
-		var pas_y := 34.0
+		var y_leg := y_diff + 86.0
+		var pas_y := 32.0
 		var demi_icone := 10.0
 
 		# Nourriture
