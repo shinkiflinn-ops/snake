@@ -44,11 +44,15 @@ const POIDS_BONUS := {
 	TypeBonus.VIE: 10,
 }
 
-# Palette de couleurs (noir et blanc de base, rouge pour la nourriture, couleurs par bonus)
-const COULEUR_FOND := Color("#000000")
+# Palette de couleurs (tokens Hallmark : surfaces, bordures, texte, accents)
+const COULEUR_FOND := Color("#050507")
+const COULEUR_FOND_ARENE := Color("#000000")
+const COULEUR_SURFACE_UI := Color("#0d0d12")
+const COULEUR_SURFACE_SURVOL := Color("#16161f")
+const COULEUR_BORDURE_SUBTILE := Color("#23232d")
 const COULEUR_BORDURE := Color("#ffffff")
 const COULEUR_TETE := Color("#ffffff")
-const COULEUR_CORPS := Color("#cccccc")
+const COULEUR_CORPS := Color("#b8b8c4")
 const COULEUR_CONSOMMABLE := Color("#e52521")
 const COULEUR_BOUCLIER := Color("#38bdf8")
 const COULEUR_VIE := Color("#22c55e")
@@ -59,7 +63,8 @@ const COULEUR_CISEAUX := Color("#fb923c")
 const COULEUR_ENNEMI_TETE := Color("#ff2a2a")
 const COULEUR_ENNEMI_CORPS := Color("#991b1b")
 const COULEUR_TEXTE := Color("#ffffff")
-const COULEUR_TEXTE_INACTIF := Color("#444444")
+const COULEUR_TEXTE_MUTED := Color("#8a8a99")
+const COULEUR_TEXTE_INACTIF := Color("#444452")
 const CHEMIN_SAUVEGARDE := "user://snake_save.cfg"
 
 var serpent: Array[Vector2i] = []          # serpent[0] = la tête
@@ -122,6 +127,9 @@ var intensite_secousse := 0.0
 var couleur_flash := Color.TRANSPARENT
 var alpha_flash := 0.0
 var temps_pause_respawn := 0.0                # micro-pause avec clignotement après perte d'une vie
+var temps_animation := 0.0                    # horloge visuelle pour micro-animations
+var zones_cliquables: Dictionary = {}         # { action: Rect2 } pour les boutons d'interface
+var survol_action := ""
 
 
 func _ready() -> void:
@@ -147,7 +155,8 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	var modifie := false
+	temps_animation += delta
+	var modifie := etat_jeu == EtatJeu.JEU or etat_jeu == EtatJeu.MENU
 
 	# 1. Expiration / clignotement des bonus, cooldown des vies et durées des pouvoirs actifs
 	if etat_jeu == EtatJeu.JEU:
@@ -402,26 +411,85 @@ func _basculer_pause() -> void:
 		queue_redraw()
 
 
+func _retourner_au_menu() -> void:
+	minuteur.paused = false
+	minuteur_bonus.paused = false
+	minuteur.stop()
+	minuteur_bonus.stop()
+	serpents_ennemis.clear()
+	alertes_ennemis.clear()
+	bonus_actifs.clear()
+	particules.clear()
+	textes_flottants.clear()
+	_reinitialiser_serpent()
+	_placer_nourriture()
+	meilleur_score = int(meilleurs_scores[difficulte])
+	etat_jeu = EtatJeu.MENU
+	survol_action = ""
+	_maj_volume_musique()
+	queue_redraw()
+
+
+func _executer_action_ui(action: String) -> void:
+	match action:
+		"facile":
+			if difficulte != Difficulte.FACILE:
+				difficulte = Difficulte.FACILE
+				meilleur_score = int(meilleurs_scores[difficulte])
+				_jouer_son(son_demarrer, 0.9)
+				queue_redraw()
+		"difficile":
+			if difficulte != Difficulte.DIFFICILE:
+				difficulte = Difficulte.DIFFICILE
+				meilleur_score = int(meilleurs_scores[difficulte])
+				_jouer_son(son_demarrer, 1.15)
+				queue_redraw()
+		"jouer", "rejouer":
+			minuteur.paused = false
+			minuteur_bonus.paused = false
+			_jouer_son(son_demarrer)
+			_nouvelle_partie()
+		"reprendre":
+			_basculer_pause()
+		"menu":
+			_jouer_son(son_demarrer, 0.85)
+			_retourner_au_menu()
+
+
 func _unhandled_input(evenement: InputEvent) -> void:
+	if etat_jeu != EtatJeu.JEU:
+		if evenement is InputEventMouseMotion:
+			var nouveau_survol := ""
+			for action in zones_cliquables:
+				if zones_cliquables[action].has_point(evenement.position):
+					nouveau_survol = action
+					break
+			if nouveau_survol != survol_action:
+				survol_action = nouveau_survol
+				queue_redraw()
+			return
+		if evenement is InputEventMouseButton and evenement.pressed and evenement.button_index == MOUSE_BUTTON_LEFT:
+			for action in zones_cliquables:
+				if zones_cliquables[action].has_point(evenement.position):
+					_executer_action_ui(action)
+					return
+
 	if not (evenement is InputEventKey and evenement.pressed and not evenement.echo):
 		return
 
 	if etat_jeu == EtatJeu.MENU:
 		if evenement.physical_keycode in [KEY_LEFT, KEY_A, KEY_RIGHT, KEY_D]:
-			difficulte = Difficulte.DIFFICILE if difficulte == Difficulte.FACILE else Difficulte.FACILE
-			meilleur_score = int(meilleurs_scores[difficulte])
-			_jouer_son(son_demarrer, 1.15 if difficulte == Difficulte.DIFFICILE else 0.9)
-			queue_redraw()
+			_executer_action_ui("difficile" if difficulte == Difficulte.FACILE else "facile")
 			return
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
-			_jouer_son(son_demarrer)
-			_nouvelle_partie()
+			_executer_action_ui("jouer")
 		return
 
 	if etat_jeu == EtatJeu.GAME_OVER:
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
-			_jouer_son(son_demarrer)
-			_nouvelle_partie()
+			_executer_action_ui("rejouer")
+		elif evenement.physical_keycode == KEY_M:
+			_executer_action_ui("menu")
 		return
 
 	if evenement.keycode == KEY_P or evenement.keycode == KEY_ESCAPE:
@@ -430,10 +498,9 @@ func _unhandled_input(evenement: InputEvent) -> void:
 
 	if etat_jeu == EtatJeu.PAUSE:
 		if evenement.keycode == KEY_ENTER:
-			minuteur.paused = false
-			minuteur_bonus.paused = false
-			_jouer_son(son_demarrer)
-			_nouvelle_partie()
+			_executer_action_ui("rejouer")
+		elif evenement.physical_keycode == KEY_M:
+			_executer_action_ui("menu")
 		return
 
 	# physical_keycode : la touche W/A/S/D d'un clavier QWERTY correspond à Z/Q/S/D sur AZERTY
@@ -984,12 +1051,64 @@ func _dessiner_bonus(bonus: Dictionary) -> void:
 	_dessiner_forme_bonus(bonus["type"], centre, demi)
 
 
+func _dessiner_yeux_serpent(rect_tete: Rect2, dir: Vector2i, couleur_oeil: Color) -> void:
+	var centre := rect_tete.position + rect_tete.size * 0.5
+	var avant := Vector2(dir) * 4.5
+	var perp := Vector2(-dir.y, dir.x) * 4.2
+	draw_circle(centre + avant + perp, 1.9, couleur_oeil)
+	draw_circle(centre + avant - perp, 1.9, couleur_oeil)
+
+
+func _dessiner_icone_vie(centre: Vector2, taille: float, actif: bool) -> void:
+	var c := COULEUR_VIE if actif else COULEUR_BORDURE_SUBTILE
+	var ep := taille * 0.34
+	draw_rect(Rect2(centre.x - ep * 0.5, centre.y - taille * 0.5, ep, taille), c)
+	draw_rect(Rect2(centre.x - taille * 0.5, centre.y - ep * 0.5, taille, ep), c)
+
+
+func _dessiner_badge_hud(police: Font, pos_droite: Vector2, texte: String, couleur: Color) -> float:
+	var taille_texte := police.get_string_size(texte, HORIZONTAL_ALIGNMENT_LEFT, -1, 13)
+	var largeur := taille_texte.x + 18.0
+	var rect := Rect2(pos_droite.x - largeur, pos_droite.y - 13.0, largeur, 26.0)
+	draw_rect(rect, Color(couleur.r, couleur.g, couleur.b, 0.14))
+	draw_rect(rect, Color(couleur.r, couleur.g, couleur.b, 0.65), false, 1.2)
+	draw_string(police, Vector2(rect.position.x + 9.0, rect.position.y + 18.0), texte, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, couleur)
+	return largeur + 8.0
+
+
+func _dessiner_bouton(police: Font, action: String, rect: Rect2, label: String, primaire: bool, accent := COULEUR_TETE) -> void:
+	zones_cliquables[action] = rect
+	var survole := survol_action == action
+	var fond := COULEUR_SURFACE_UI
+	var bord := COULEUR_BORDURE_SUBTILE
+	var couleur_txt := COULEUR_TEXTE
+
+	if primaire:
+		fond = accent if not survole else accent.lightened(0.15)
+		bord = fond
+		couleur_txt = COULEUR_FOND_ARENE
+	elif survole:
+		fond = COULEUR_SURFACE_SURVOL
+		bord = accent
+
+	draw_rect(rect, fond)
+	draw_rect(rect, bord, false, 1.5)
+	draw_string(police, Vector2(rect.position.x, rect.position.y + rect.size.y * 0.5 + 6.0), label,
+		HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, 16, couleur_txt)
+
+
 func _draw() -> void:
+	zones_cliquables.clear()
 	var largeur_arene := COLONNES * TAILLE_CASE
 	var hauteur_arene := LIGNES * TAILLE_CASE
 	var rect_arene := Rect2(ORIGINE_GRILLE, Vector2(largeur_arene, hauteur_arene))
 	var police := police_ui if police_ui != null else ThemeDB.fallback_font
 	var titre_font := police_titre if police_titre != null else police
+
+	# Fond global + barre HUD structurée
+	draw_rect(Rect2(0, 0, ORIGINE_GRILLE.x * 2.0 + largeur_arene, ORIGINE_GRILLE.y + hauteur_arene + 24.0), COULEUR_FOND)
+	draw_rect(Rect2(0, 0, ORIGINE_GRILLE.x * 2.0 + largeur_arene, ORIGINE_GRILLE.y - 8.0), COULEUR_SURFACE_UI)
+	draw_line(Vector2(0, ORIGINE_GRILLE.y - 8.0), Vector2(ORIGINE_GRILLE.x * 2.0 + largeur_arene, ORIGINE_GRILLE.y - 8.0), COULEUR_BORDURE_SUBTILE, 1.0)
 
 	# Appliquer la secousse d'écran à l'arène et aux effets
 	var decalage_secousse := Vector2.ZERO
@@ -1001,10 +1120,14 @@ func _draw() -> void:
 	draw_set_transform(decalage_secousse)
 
 	# 1. Fond de l'arène (noir pur sans grille)
-	draw_rect(rect_arene, COULEUR_FOND)
+	draw_rect(rect_arene, COULEUR_FOND_ARENE)
 
-	# 2. Nourriture normale (carré rouge)
-	draw_rect(Rect2(ORIGINE_GRILLE + Vector2(nourriture) * TAILLE_CASE + Vector2(2, 2), Vector2(TAILLE_CASE - 4, TAILLE_CASE - 4)), COULEUR_CONSOMMABLE)
+	# 2. Nourriture normale (carré rouge avec légère pulsation)
+	var pulse := 0.5 + 0.5 * sin(temps_animation * 5.0)
+	var pos_nourriture := ORIGINE_GRILLE + Vector2(nourriture) * TAILLE_CASE
+	draw_rect(Rect2(pos_nourriture + Vector2(1, 1), Vector2(TAILLE_CASE - 2, TAILLE_CASE - 2)),
+		Color(COULEUR_CONSOMMABLE.r, COULEUR_CONSOMMABLE.g, COULEUR_CONSOMMABLE.b, 0.14 + 0.12 * pulse))
+	draw_rect(Rect2(pos_nourriture + Vector2(3, 3), Vector2(TAILLE_CASE - 6, TAILLE_CASE - 6)), COULEUR_CONSOMMABLE)
 
 	# 4. Bonus aléatoires
 	for bonus in bonus_actifs:
@@ -1016,7 +1139,6 @@ func _draw() -> void:
 		var entree: Vector2i = alerte["entree"]
 		var dir_ennemi: Vector2i = alerte["dir"]
 		var centre_entree := _centre_case(entree)
-		# Ligne de trajectoire discrète
 		var fin_ligne := centre_entree + Vector2(dir_ennemi) * float(maxi(COLONNES, LIGNES) * TAILLE_CASE)
 		fin_ligne.x = clampf(fin_ligne.x, ORIGINE_GRILLE.x, ORIGINE_GRILLE.x + largeur_arene)
 		fin_ligne.y = clampf(fin_ligne.y, ORIGINE_GRILLE.y, ORIGINE_GRILLE.y + hauteur_arene)
@@ -1036,22 +1158,28 @@ func _draw() -> void:
 			draw_rect(rect_e, couleur_e)
 			if k == 0:
 				draw_rect(rect_e, COULEUR_TETE, false, 1.5)
+				_dessiner_yeux_serpent(rect_e, ennemi["dir"], COULEUR_TETE)
 
-	# 5. Serpent (clignote pendant la micro-pause après respawn, translucide violet en Mode Fantôme)
+	# 5. Serpent (dégradé subtil + yeux sur la tête, translucide en Mode Fantôme)
 	var afficher_serpent := temps_pause_respawn <= 0.0 or int(temps_pause_respawn * 14.0) % 2 == 0
 	var en_fantome := temps_fantome > 0.0
+	var total_segs := maxf(1.0, float(serpent.size() - 1))
 	if afficher_serpent:
 		for i in serpent.size():
-			var couleur := COULEUR_TETE if i == 0 else COULEUR_CORPS
+			var t_seg := float(i) / total_segs
+			var couleur := COULEUR_TETE if i == 0 else COULEUR_CORPS.lerp(Color("#7a7a88"), t_seg * 0.65)
 			if en_fantome:
 				couleur = couleur.lerp(COULEUR_FANTOME, 0.45)
-				couleur.a = 0.6
-			var rect_segment := Rect2(ORIGINE_GRILLE + Vector2(serpent[i]) * TAILLE_CASE + Vector2(1, 1), Vector2(TAILLE_CASE - 2, TAILLE_CASE - 2))
+				couleur.a = 0.65
+			var marge := 1.0 if i == 0 else lerpf(1.2, 3.0, t_seg)
+			var rect_segment := Rect2(ORIGINE_GRILLE + Vector2(serpent[i]) * TAILLE_CASE + Vector2(marge, marge), Vector2(TAILLE_CASE - marge * 2.0, TAILLE_CASE - marge * 2.0))
 			draw_rect(rect_segment, couleur)
 			if en_fantome:
 				draw_rect(rect_segment, COULEUR_FANTOME, false, 1.5)
-			if i == 0 and a_bouclier:
-				draw_rect(rect_segment, COULEUR_BOUCLIER, false, 2.5)
+			if i == 0:
+				_dessiner_yeux_serpent(rect_segment, direction, COULEUR_FOND_ARENE)
+				if a_bouclier:
+					draw_rect(rect_segment, COULEUR_BOUCLIER, false, 2.5)
 
 	# 6. Particules / éclats
 	for p in particules:
@@ -1076,132 +1204,155 @@ func _draw() -> void:
 		c_flash.a = alpha_flash
 		draw_rect(rect_arene, c_flash)
 
-	# 9. Bordure blanche nette autour de l'arène
-	draw_rect(rect_arene, COULEUR_BORDURE, false, 2.0)
+	# 9. Bordure nette autour de l'arène
+	draw_rect(rect_arene, COULEUR_BORDURE_SUBTILE if etat_jeu == EtatJeu.MENU else COULEUR_BORDURE, false, 2.0)
 
 	# Remise à zéro de la transformation pour que le HUD reste stable
 	draw_set_transform(Vector2.ZERO)
 
-	# 10. Barre HUD en haut (au-dessus de l'arène)
-	var y_hud := 44.0
-	var texte_score := "SCORE : %d  |  RECORD : %d" % [score, meilleur_score]
+	# 10. Barre HUD structurée en haut
+	var y_hud := 40.0
+	var x_gauche := ORIGINE_GRILLE.x
+	draw_string(police, Vector2(x_gauche, y_hud), "%d" % score, HORIZONTAL_ALIGNMENT_LEFT, -1, 26, COULEUR_COMBO_X2 if temps_combo_x2 > 0.0 else COULEUR_TEXTE)
+	var largeur_score := police.get_string_size("%d" % score, HORIZONTAL_ALIGNMENT_LEFT, -1, 26).x
+	draw_string(police, Vector2(x_gauche + largeur_score + 14.0, y_hud - 2.0), "Record %d" % meilleur_score, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, COULEUR_TEXTE_MUTED)
 	if temps_combo_x2 > 0.0:
-		texte_score += "  x2 (%.0fs)" % ceilf(temps_combo_x2)
-	var couleur_score := COULEUR_COMBO_X2 if temps_combo_x2 > 0.0 else COULEUR_TEXTE
-	draw_string(police, Vector2(ORIGINE_GRILLE.x, y_hud), texte_score, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, couleur_score)
-	draw_string(police, Vector2(ORIGINE_GRILLE.x, y_hud), "VIES : %d/%d" % [vies, MAX_VIES], HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 22, COULEUR_VIE if vies > 1 else COULEUR_TEXTE)
+		var x_x2 := x_gauche + largeur_score + 14.0 + police.get_string_size("Record %d" % meilleur_score, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x + 12.0
+		draw_string(police, Vector2(x_x2, y_hud - 2.0), "x2 %.0fs" % ceilf(temps_combo_x2), HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_COMBO_X2)
 
-	var statuts_droite: Array[String] = []
-	var couleur_droite := COULEUR_TEXTE_INACTIF
+	# Vies en icônes visuelles (+) centrées
+	var centre_hud_x := ORIGINE_GRILLE.x + largeur_arene * 0.5
+	var espacement_vies := 26.0
+	var x_depart_vies := centre_hud_x - espacement_vies
+	for v_idx in MAX_VIES:
+		_dessiner_icone_vie(Vector2(x_depart_vies + v_idx * espacement_vies, 32.0), 14.0, v_idx < vies)
+
+	# Badges de statut à droite
+	var curseur_droite := ORIGINE_GRILLE.x + largeur_arene
 	if difficulte == Difficulte.DIFFICILE:
 		if not alertes_ennemis.is_empty() or not serpents_ennemis.is_empty():
-			statuts_droite.append("ALERTE !")
-			couleur_droite = COULEUR_ENNEMI_TETE
+			curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Alerte", COULEUR_ENNEMI_TETE)
 		else:
-			statuts_droite.append("VAGUE %.0fs" % ceilf(temps_prochaine_vague))
-			couleur_droite = COULEUR_TEXTE
-	if temps_ralenti > 0.0:
-		statuts_droite.append("RALENTI %.0fs" % ceilf(temps_ralenti))
-		couleur_droite = COULEUR_RALENTI
-	if temps_fantome > 0.0:
-		statuts_droite.append("FANTÔME %.0fs" % ceilf(temps_fantome))
-		couleur_droite = COULEUR_FANTOME
+			curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Vague %.0fs" % ceilf(temps_prochaine_vague), COULEUR_TEXTE_MUTED)
 	if a_bouclier:
-		statuts_droite.append("BOUCLIER")
-		if temps_fantome <= 0.0 and temps_ralenti <= 0.0:
-			couleur_droite = COULEUR_BOUCLIER
-	var texte_droite := " | ".join(statuts_droite) if not statuts_droite.is_empty() else "POUVOIRS : --"
-	draw_string(police, Vector2(ORIGINE_GRILLE.x, y_hud), texte_droite, HORIZONTAL_ALIGNMENT_RIGHT, largeur_arene, 20, couleur_droite)
+		curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Bouclier", COULEUR_BOUCLIER)
+	if temps_fantome > 0.0:
+		curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Fantôme %.0fs" % ceilf(temps_fantome), COULEUR_FANTOME)
+	if temps_ralenti > 0.0:
+		curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Ralenti %.0fs" % ceilf(temps_ralenti), COULEUR_RALENTI)
 
-	# 11. Écrans d'état (Menu Titre, Pause, Game Over)
+	# 11. Écrans d'état (Menu Titre 2 colonnes, Pause, Game Over)
 	if etat_jeu == EtatJeu.MENU:
-		draw_rect(rect_arene, Color(0, 0, 0, 0.86))
-		var y_base := ORIGINE_GRILLE.y + 68.0
-		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_base), "SNAKE",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 62, COULEUR_TETE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_base + 30), "ÉDITION NÉON",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 16, COULEUR_CONSOMMABLE)
+		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.92))
 
-		# Sélecteur de difficulté (FACILE / DIFFICILE)
-		var y_diff := y_base + 66.0
-		var label_facile := "[ FACILE ]" if difficulte == Difficulte.FACILE else "  FACILE  "
-		var label_difficile := "[ DIFFICILE ]" if difficulte == Difficulte.DIFFICILE else "  DIFFICILE  "
-		var centre_x := ORIGINE_GRILLE.x + largeur_arene * 0.5
-		draw_string(police, Vector2(centre_x - 210.0, y_diff), label_facile,
-			HORIZONTAL_ALIGNMENT_RIGHT, 190.0, 20, COULEUR_VIE if difficulte == Difficulte.FACILE else COULEUR_TEXTE_INACTIF)
-		draw_string(police, Vector2(centre_x + 20.0, y_diff), label_difficile,
-			HORIZONTAL_ALIGNMENT_LEFT, 210.0, 20, COULEUR_ENNEMI_TETE if difficulte == Difficulte.DIFFICILE else COULEUR_TEXTE_INACTIF)
-		var desc_diff := "Classique sans ennemis" if difficulte == Difficulte.FACILE else "2 serpents ennemis traversent toutes les 90s"
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_diff + 24.0), desc_diff + "   (◀ ▶ pour changer)",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 14, COULEUR_TEXTE_INACTIF.lightened(0.45))
+		var x_col_g := ORIGINE_GRILLE.x + 48.0
+		var w_col_g := 360.0
+		var y_top := ORIGINE_GRILLE.y + 84.0
+
+		# Colonne gauche : Identité, Sélecteur de difficulté, Action principale
+		draw_string(titre_font, Vector2(x_col_g, y_top), "SNAKE", HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 76, COULEUR_TETE)
+		draw_rect(Rect2(x_col_g, y_top + 14.0, 44.0, 4.0), COULEUR_CONSOMMABLE)
+		draw_string(police, Vector2(x_col_g + 56.0, y_top + 22.0), "Édition Néon", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_TEXTE_MUTED)
+
+		# Segmented control cliquable pour la difficulté
+		var y_seg := y_top + 76.0
+		var w_seg := 320.0
+		var h_seg := 42.0
+		draw_rect(Rect2(x_col_g, y_seg, w_seg, h_seg), COULEUR_SURFACE_UI)
+		draw_rect(Rect2(x_col_g, y_seg, w_seg, h_seg), COULEUR_BORDURE_SUBTILE, false, 1.5)
+		_dessiner_bouton(police, "facile", Rect2(x_col_g + 4.0, y_seg + 4.0, w_seg * 0.5 - 6.0, h_seg - 8.0),
+			"Facile", difficulte == Difficulte.FACILE, COULEUR_VIE)
+		_dessiner_bouton(police, "difficile", Rect2(x_col_g + w_seg * 0.5 + 2.0, y_seg + 4.0, w_seg * 0.5 - 6.0, h_seg - 8.0),
+			"Difficile", difficulte == Difficulte.DIFFICILE, COULEUR_ENNEMI_TETE)
+
+		var desc_mode := "Mode classique sans ennemis." if difficulte == Difficulte.FACILE else "2 serpents ennemis traversent toutes les 90 s."
+		draw_string(police, Vector2(x_col_g, y_seg + 68.0), desc_mode, HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 14, COULEUR_TEXTE_MUTED)
 
 		if meilleur_score > 0:
-			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_diff + 50.0), "MEILLEUR SCORE : %d" % meilleur_score,
-				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 18, COULEUR_COMBO_X2)
+			draw_string(police, Vector2(x_col_g, y_seg + 104.0), "Meilleur score : %d" % meilleur_score,
+				HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 18, COULEUR_COMBO_X2)
 
-		# Légende des consommables
-		var x_legende := ORIGINE_GRILLE.x + largeur_arene * 0.5 - 185.0
-		var y_leg := y_diff + 86.0
-		var pas_y := 32.0
-		var demi_icone := 10.0
+		# Bouton principal Jouer
+		var y_btn := y_top + 246.0
+		_dessiner_bouton(police, "jouer", Rect2(x_col_g, y_btn, 220.0, 50.0), "Jouer", true, COULEUR_TETE)
+		draw_string(police, Vector2(x_col_g, y_btn + 78.0), "Entrée ou Espace pour lancer", HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 13, COULEUR_TEXTE_MUTED)
+		draw_string(police, Vector2(x_col_g, ORIGINE_GRILLE.y + hauteur_arene - 40.0), "Flèches / ZQSD : diriger   ·   P / Échap : pause",
+			HORIZONTAL_ALIGNMENT_LEFT, w_col_g + 80.0, 13, COULEUR_TEXTE_INACTIF.lightened(0.25))
+
+		# Colonne droite : Panneau des consommables
+		var x_panel := ORIGINE_GRILLE.x + 448.0
+		var y_panel := ORIGINE_GRILLE.y + 62.0
+		var w_panel := largeur_arene - 496.0
+		var h_panel := hauteur_arene - 124.0
+		draw_rect(Rect2(x_panel, y_panel, w_panel, h_panel), COULEUR_SURFACE_UI)
+		draw_rect(Rect2(x_panel, y_panel, w_panel, h_panel), COULEUR_BORDURE_SUBTILE, false, 1.5)
+		draw_string(police, Vector2(x_panel + 24.0, y_panel + 36.0), "Consommables & bonus", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_TEXTE)
+		draw_line(Vector2(x_panel + 24.0, y_panel + 52.0), Vector2(x_panel + w_panel - 24.0, y_panel + 52.0), COULEUR_BORDURE_SUBTILE, 1.0)
+
+		var x_ico := x_panel + 38.0
+		var x_txt := x_panel + 68.0
+		var y_item := y_panel + 86.0
+		var pas_item := 58.0
+		var demi_ico := 9.0
 
 		# Nourriture
-		draw_rect(Rect2(x_legende - demi_icone, y_leg - demi_icone - 5.0, demi_icone * 2.0, demi_icone * 2.0), COULEUR_CONSOMMABLE)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Nourriture  —  +1 pt (grandit et accélère)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_TEXTE)
+		draw_rect(Rect2(x_ico - demi_ico, y_item - demi_ico, demi_ico * 2.0, demi_ico * 2.0), COULEUR_CONSOMMABLE)
+		draw_string(police, Vector2(x_txt, y_item - 2.0), "Nourriture", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_CONSOMMABLE)
+		draw_string(police, Vector2(x_txt, y_item + 17.0), "+1 pt, grandit et accélère", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COULEUR_TEXTE_MUTED)
 
-		# Bouclier
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.BOUCLIER, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Bouclier  —  Absorbe 1 collision", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_BOUCLIER)
-
-		# Fantôme
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.FANTOME, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Fantôme  —  Traverse murs et corps (6s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_FANTOME)
-
-		# Combo x2
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.COMBO_X2, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Combo x2  —  Points doublés (10s)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_COMBO_X2)
-
-		# Ralenti
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.RALENTI, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ralenti  —  Ralentit 6s (toutes les 1 min)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_RALENTI)
-
-		# Ciseaux
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.CISEAUX, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Ciseaux  —  Coupe 5 segments (tous les 15 pts)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_CISEAUX)
-
-		# Vie
-		y_leg += pas_y
-		_dessiner_forme_bonus(TypeBonus.VIE, Vector2(x_legende, y_leg - 5.0), demi_icone)
-		draw_string(police, Vector2(x_legende + 24.0, y_leg), "Vie +1  —  Respawn au centre (max 3)", HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_VIE)
-
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 84.0), "APPUIE SUR ENTRÉE OU ESPACE POUR JOUER",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 22, COULEUR_TETE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, ORIGINE_GRILLE.y + hauteur_arene - 52.0), "Flèches ou ZQSD pour diriger   •   P ou Échap pour Pause",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 15, COULEUR_TEXTE_INACTIF.lightened(0.4))
+		var items_bonus := [
+			[TypeBonus.BOUCLIER, "Bouclier", "Absorbe 1 collision", COULEUR_BOUCLIER],
+			[TypeBonus.FANTOME, "Fantôme", "Traverse murs et corps pendant 6 s", COULEUR_FANTOME],
+			[TypeBonus.COMBO_X2, "Combo x2", "Points doublés pendant 10 s", COULEUR_COMBO_X2],
+			[TypeBonus.RALENTI, "Ralenti", "Ralentit le jeu 6 s (toutes les 1 min)", COULEUR_RALENTI],
+			[TypeBonus.CISEAUX, "Ciseaux", "Coupe 5 segments (tous les 15 pts)", COULEUR_CISEAUX],
+			[TypeBonus.VIE, "Vie +1", "Respawn au centre (max 3 vies)", COULEUR_VIE],
+		]
+		for item in items_bonus:
+			y_item += pas_item
+			_dessiner_forme_bonus(item[0], Vector2(x_ico, y_item), demi_ico)
+			draw_string(police, Vector2(x_txt, y_item - 2.0), item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, item[3])
+			draw_string(police, Vector2(x_txt, y_item + 17.0), item[2], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COULEUR_TEXTE_MUTED)
 
 	elif etat_jeu == EtatJeu.PAUSE:
-		draw_rect(rect_arene, Color(0, 0, 0, 0.72))
-		var y_centre := ORIGINE_GRILLE.y + hauteur_arene * 0.5
-		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_centre - 18), "PAUSE",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 46, COULEUR_TETE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 24), "P ou Échap pour reprendre   •   Entrée pour recommencer",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 18, COULEUR_TEXTE_INACTIF.lightened(0.4))
+		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.78))
+		var w_modal := 420.0
+		var h_modal := 260.0
+		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
+		draw_rect(rect_modal, COULEUR_SURFACE_UI)
+		draw_rect(rect_modal, COULEUR_BORDURE_SUBTILE, false, 1.5)
+
+		draw_string(titre_font, Vector2(rect_modal.position.x, rect_modal.position.y + 62.0), "PAUSE",
+			HORIZONTAL_ALIGNMENT_CENTER, w_modal, 44, COULEUR_TETE)
+		draw_string(police, Vector2(rect_modal.position.x, rect_modal.position.y + 92.0), "Score : %d   ·   %s" % [score, "Difficile" if difficulte == Difficulte.DIFFICILE else "Facile"],
+			HORIZONTAL_ALIGNMENT_CENTER, w_modal, 14, COULEUR_TEXTE_MUTED)
+
+		var x_btn_m := rect_modal.position.x + 40.0
+		var w_btn_m := w_modal - 80.0
+		_dessiner_bouton(police, "reprendre", Rect2(x_btn_m, rect_modal.position.y + 122.0, w_btn_m, 42.0), "Reprendre (P)", true, COULEUR_TETE)
+		_dessiner_bouton(police, "rejouer", Rect2(x_btn_m, rect_modal.position.y + 174.0, w_btn_m * 0.5 - 6.0, 38.0), "Recommencer", false, COULEUR_TETE)
+		_dessiner_bouton(police, "menu", Rect2(x_btn_m + w_btn_m * 0.5 + 6.0, rect_modal.position.y + 174.0, w_btn_m * 0.5 - 6.0, 38.0), "Menu (M)", false, COULEUR_TEXTE_MUTED)
 
 	elif etat_jeu == EtatJeu.GAME_OVER:
-		draw_rect(rect_arene, Color(0, 0, 0, 0.75))
-		var y_centre := ORIGINE_GRILLE.y + hauteur_arene * 0.5
-		draw_string(titre_font, Vector2(ORIGINE_GRILLE.x, y_centre - 28), "PERDU",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 48, COULEUR_CONSOMMABLE)
+		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.82))
+		var w_modal := 440.0
+		var h_modal := 270.0
+		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
+		draw_rect(rect_modal, COULEUR_SURFACE_UI)
+		draw_rect(rect_modal, COULEUR_BORDURE_SUBTILE, false, 1.5)
+
+		draw_string(titre_font, Vector2(rect_modal.position.x, rect_modal.position.y + 64.0), "PERDU",
+			HORIZONTAL_ALIGNMENT_CENTER, w_modal, 48, COULEUR_CONSOMMABLE)
 		if nouveau_record:
-			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 8), "NOUVEAU RECORD : %d !" % meilleur_score,
-				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 22, COULEUR_COMBO_X2)
+			draw_string(police, Vector2(rect_modal.position.x, rect_modal.position.y + 104.0), "Nouveau record : %d" % meilleur_score,
+				HORIZONTAL_ALIGNMENT_CENTER, w_modal, 20, COULEUR_COMBO_X2)
 		else:
-			draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 8), "Score : %d   |   Meilleur score : %d" % [score, meilleur_score],
-				HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 20, COULEUR_TEXTE)
-		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_centre + 42), "Entrée ou Espace pour rejouer",
-			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 18, COULEUR_TEXTE_INACTIF.lightened(0.4))
+			draw_string(police, Vector2(rect_modal.position.x, rect_modal.position.y + 104.0), "Score : %d   ·   Record : %d" % [score, meilleur_score],
+				HORIZONTAL_ALIGNMENT_CENTER, w_modal, 18, COULEUR_TEXTE)
+		draw_string(police, Vector2(rect_modal.position.x, rect_modal.position.y + 132.0), "Mode %s" % ("Difficile" if difficulte == Difficulte.DIFFICILE else "Facile"),
+			HORIZONTAL_ALIGNMENT_CENTER, w_modal, 13, COULEUR_TEXTE_MUTED)
+
+		var x_btn_go := rect_modal.position.x + 40.0
+		var w_btn_go := w_modal - 80.0
+		_dessiner_bouton(police, "rejouer", Rect2(x_btn_go, rect_modal.position.y + 160.0, w_btn_go, 44.0), "Rejouer (Entrée)", true, COULEUR_TETE)
+		_dessiner_bouton(police, "menu", Rect2(x_btn_go, rect_modal.position.y + 212.0, w_btn_go, 36.0), "Menu principal (M)", false, COULEUR_TEXTE_MUTED)
