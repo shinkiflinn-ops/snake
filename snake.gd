@@ -44,27 +44,133 @@ const POIDS_BONUS := {
 	TypeBonus.VIE: 10,
 }
 
-# Palette de couleurs (tokens Hallmark : surfaces, bordures, texte, accents)
-const COULEUR_FOND := Color("#050507")
-const COULEUR_FOND_ARENE := Color("#000000")
-const COULEUR_SURFACE_UI := Color("#0d0d12")
-const COULEUR_SURFACE_SURVOL := Color("#16161f")
-const COULEUR_BORDURE_SUBTILE := Color("#23232d")
-const COULEUR_BORDURE := Color("#ffffff")
-const COULEUR_TETE := Color("#ffffff")
-const COULEUR_CORPS := Color("#b8b8c4")
-const COULEUR_CONSOMMABLE := Color("#e52521")
-const COULEUR_BOUCLIER := Color("#38bdf8")
-const COULEUR_VIE := Color("#22c55e")
-const COULEUR_FANTOME := Color("#a855f7")
-const COULEUR_COMBO_X2 := Color("#facc15")
-const COULEUR_RALENTI := Color("#f472b6")
-const COULEUR_CISEAUX := Color("#fb923c")
-const COULEUR_ENNEMI_TETE := Color("#ff2a2a")
-const COULEUR_ENNEMI_CORPS := Color("#991b1b")
-const COULEUR_TEXTE := Color("#ffffff")
-const COULEUR_TEXTE_MUTED := Color("#8a8a99")
-const COULEUR_TEXTE_INACTIF := Color("#444452")
+# Thèmes visuels (4 palettes complètes testables en direct avec T ou le bouton Thème)
+const THEMES := [
+	{
+		"nom": "Papier Crème",
+		"fond": Color("#eae5da"),
+		"arene": Color("#faf8f3"),
+		"surface": Color("#f2ede3"),
+		"survol": Color("#e5dfd2"),
+		"bordure_subtile": Color("#d4cec0"),
+		"bordure": Color("#18181b"),
+		"tete": Color("#18181b"),
+		"corps": Color("#3f3f46"),
+		"corps_fin": Color("#71717a"),
+		"oeil": Color("#faf8f3"),
+		"texte": Color("#18181b"),
+		"texte_muted": Color("#62605a"),
+		"texte_inactif": Color("#a8a29e"),
+		"overlay": Color(0.98, 0.97, 0.95, 0.93),
+		"bouton_prim_texte": Color("#faf8f3"),
+		"contour_bonus": Color("#18181b"),
+		"bouclier": Color("#0284c7"),
+		"vie": Color("#16a34a"),
+		"combo": Color("#d97706"),
+		"ralenti": Color("#db2777"),
+		"ciseaux": Color("#ea580c"),
+	},
+	{
+		"nom": "Bleu Nuit",
+		"fond": Color("#090e1a"),
+		"arene": Color("#0f172a"),
+		"surface": Color("#162036"),
+		"survol": Color("#1e293b"),
+		"bordure_subtile": Color("#28354d"),
+		"bordure": Color("#e2e8f0"),
+		"tete": Color("#f8fafc"),
+		"corps": Color("#cbd5e1"),
+		"corps_fin": Color("#64748b"),
+		"oeil": Color("#0f172a"),
+		"texte": Color("#f8fafc"),
+		"texte_muted": Color("#94a3b8"),
+		"texte_inactif": Color("#475569"),
+		"overlay": Color(0.06, 0.09, 0.16, 0.92),
+		"bouton_prim_texte": Color("#0f172a"),
+		"contour_bonus": Color("#f8fafc"),
+		"bouclier": Color("#38bdf8"),
+		"vie": Color("#22c55e"),
+		"combo": Color("#facc15"),
+		"ralenti": Color("#f472b6"),
+		"ciseaux": Color("#fb923c"),
+	},
+	{
+		"nom": "Vert Sauge",
+		"fond": Color("#dfe9e1"),
+		"arene": Color("#f5f9f5"),
+		"surface": Color("#e8f0e9"),
+		"survol": Color("#dae6dc"),
+		"bordure_subtile": Color("#c2d2c5"),
+		"bordure": Color("#14532d"),
+		"tete": Color("#14532d"),
+		"corps": Color("#166534"),
+		"corps_fin": Color("#4d7c5d"),
+		"oeil": Color("#f5f9f5"),
+		"texte": Color("#123524"),
+		"texte_muted": Color("#4a6b56"),
+		"texte_inactif": Color("#94ad9b"),
+		"overlay": Color(0.96, 0.98, 0.96, 0.93),
+		"bouton_prim_texte": Color("#f5f9f5"),
+		"contour_bonus": Color("#14532d"),
+		"bouclier": Color("#0284c7"),
+		"vie": Color("#15803d"),
+		"combo": Color("#d97706"),
+		"ralenti": Color("#db2777"),
+		"ciseaux": Color("#ea580c"),
+	},
+	{
+		"nom": "Sable & Terracotta",
+		"fond": Color("#e6ddd0"),
+		"arene": Color("#f8f4ec"),
+		"surface": Color("#eee7db"),
+		"survol": Color("#e2d9c9"),
+		"bordure_subtile": Color("#d0c5b4"),
+		"bordure": Color("#292524"),
+		"tete": Color("#292524"),
+		"corps": Color("#57534e"),
+		"corps_fin": Color("#8c857e"),
+		"oeil": Color("#f8f4ec"),
+		"texte": Color("#292524"),
+		"texte_muted": Color("#78716c"),
+		"texte_inactif": Color("#b5aca1"),
+		"overlay": Color(0.97, 0.96, 0.93, 0.93),
+		"bouton_prim_texte": Color("#f8f4ec"),
+		"contour_bonus": Color("#292524"),
+		"bouclier": Color("#0369a1"),
+		"vie": Color("#15803d"),
+		"combo": Color("#b45309"),
+		"ralenti": Color("#be185d"),
+		"ciseaux": Color("#c2410c"),
+	},
+]
+
+# Tokens actifs du thème courant
+var index_theme := 0
+var COULEUR_FOND := Color("#eae5da")
+var COULEUR_FOND_ARENE := Color("#faf8f3")
+var COULEUR_SURFACE_UI := Color("#f2ede3")
+var COULEUR_SURFACE_SURVOL := Color("#e5dfd2")
+var COULEUR_BORDURE_SUBTILE := Color("#d4cec0")
+var COULEUR_BORDURE := Color("#18181b")
+var COULEUR_TETE := Color("#18181b")
+var COULEUR_CORPS := Color("#3f3f46")
+var COULEUR_CORPS_FIN := Color("#71717a")
+var COULEUR_OEIL := Color("#faf8f3")
+var COULEUR_CONSOMMABLE := Color("#e52521")
+var COULEUR_BOUCLIER := Color("#0284c7")
+var COULEUR_VIE := Color("#16a34a")
+var COULEUR_FANTOME := Color("#9333ea")
+var COULEUR_COMBO_X2 := Color("#d97706")
+var COULEUR_RALENTI := Color("#db2777")
+var COULEUR_CISEAUX := Color("#ea580c")
+var COULEUR_ENNEMI_TETE := Color("#ff2a2a")
+var COULEUR_ENNEMI_CORPS := Color("#991b1b")
+var COULEUR_TEXTE := Color("#18181b")
+var COULEUR_TEXTE_MUTED := Color("#62605a")
+var COULEUR_TEXTE_INACTIF := Color("#a8a29e")
+var COULEUR_OVERLAY := Color(0.98, 0.97, 0.95, 0.93)
+var COULEUR_BOUTON_PRIM_TEXTE := Color("#faf8f3")
+var COULEUR_CONTOUR_BONUS := Color("#18181b")
 const CHEMIN_SAUVEGARDE := "user://snake_save.cfg"
 const CHEMIN_CLASSEMENT := "user://snake_classement.json"
 const URL_FIREBASE_DB := ""  # Optionnel : URL Firebase Realtime DB pour synchro en ligne
@@ -141,11 +247,38 @@ var zones_cliquables: Dictionary = {}         # { action: Rect2 } pour les bouto
 var survol_action := ""
 
 
-func _ready() -> void:
+func _appliquer_theme(idx: int) -> void:
+	index_theme = posmod(idx, THEMES.size())
+	var t: Dictionary = THEMES[index_theme]
+	COULEUR_FOND = t["fond"]
+	COULEUR_FOND_ARENE = t["arene"]
+	COULEUR_SURFACE_UI = t["surface"]
+	COULEUR_SURFACE_SURVOL = t["survol"]
+	COULEUR_BORDURE_SUBTILE = t["bordure_subtile"]
+	COULEUR_BORDURE = t["bordure"]
+	COULEUR_TETE = t["tete"]
+	COULEUR_CORPS = t["corps"]
+	COULEUR_CORPS_FIN = t["corps_fin"]
+	COULEUR_OEIL = t["oeil"]
+	COULEUR_TEXTE = t["texte"]
+	COULEUR_TEXTE_MUTED = t["texte_muted"]
+	COULEUR_TEXTE_INACTIF = t["texte_inactif"]
+	COULEUR_OVERLAY = t["overlay"]
+	COULEUR_BOUTON_PRIM_TEXTE = t["bouton_prim_texte"]
+	COULEUR_CONTOUR_BONUS = t["contour_bonus"]
+	COULEUR_BOUCLIER = t["bouclier"]
+	COULEUR_VIE = t["vie"]
+	COULEUR_COMBO_X2 = t["combo"]
+	COULEUR_RALENTI = t["ralenti"]
+	COULEUR_CISEAUX = t["ciseaux"]
 	RenderingServer.set_default_clear_color(COULEUR_FOND)
+
+
+func _ready() -> void:
 	police_ui = load("res://fonts/FiraMono-Bold.otf") if ResourceLoader.exists("res://fonts/FiraMono-Bold.otf") else ThemeDB.fallback_font
 	police_titre = load("res://fonts/FiraSansCondensed-Heavy.otf") if ResourceLoader.exists("res://fonts/FiraSansCondensed-Heavy.otf") else police_ui
 	_charger_meilleur_score()
+	_appliquer_theme(index_theme)
 	_charger_classement_local()
 	_initialiser_audio()
 
@@ -482,6 +615,11 @@ func _executer_action_ui(action: String) -> void:
 			_actualiser_classement()
 			_jouer_son(son_demarrer, 1.1)
 			queue_redraw()
+		"theme":
+			_appliquer_theme(index_theme + 1)
+			_sauvegarder_meilleur_score()
+			_jouer_son(son_demarrer, 1.0 + index_theme * 0.06)
+			queue_redraw()
 		"jouer", "rejouer":
 			minuteur.paused = false
 			minuteur_bonus.paused = false
@@ -540,6 +678,9 @@ func _unhandled_input(evenement: InputEvent) -> void:
 		if evenement.physical_keycode == KEY_C:
 			_executer_action_ui("classement")
 			return
+		if evenement.physical_keycode == KEY_T:
+			_executer_action_ui("theme")
+			return
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
 			_executer_action_ui("jouer")
 		return
@@ -566,6 +707,10 @@ func _unhandled_input(evenement: InputEvent) -> void:
 
 	if evenement.keycode == KEY_P or evenement.keycode == KEY_ESCAPE:
 		_basculer_pause()
+		return
+
+	if evenement.physical_keycode == KEY_T:
+		_executer_action_ui("theme")
 		return
 
 	if etat_jeu == EtatJeu.PAUSE:
@@ -897,6 +1042,7 @@ func _charger_meilleur_score() -> void:
 	var config := ConfigFile.new()
 	if config.load(CHEMIN_SAUVEGARDE) == OK:
 		pseudo_joueur = str(config.get_value("joueur", "pseudo", "")).strip_edges()
+		index_theme = clampi(int(config.get_value("prefs", "theme", 0)), 0, THEMES.size() - 1)
 		meilleurs_scores[Difficulte.FACILE] = int(config.get_value("scores", "facile", config.get_value("scores", "meilleur", 0)))
 		meilleurs_scores[Difficulte.DIFFICILE] = int(config.get_value("scores", "difficile", 0))
 	meilleur_score = int(meilleurs_scores[difficulte])
@@ -905,6 +1051,7 @@ func _charger_meilleur_score() -> void:
 func _sauvegarder_meilleur_score() -> void:
 	var config := ConfigFile.new()
 	config.set_value("joueur", "pseudo", pseudo_joueur)
+	config.set_value("prefs", "theme", index_theme)
 	config.set_value("scores", "facile", meilleurs_scores[Difficulte.FACILE])
 	config.set_value("scores", "difficile", meilleurs_scores[Difficulte.DIFFICILE])
 	config.save(CHEMIN_SAUVEGARDE)
@@ -1206,7 +1353,7 @@ func _dessiner_forme_bonus(type_bonus: TypeBonus, centre: Vector2, demi: float) 
 			])
 			draw_colored_polygon(losange, COULEUR_BOUCLIER)
 			var contour := PackedVector2Array([losange[0], losange[1], losange[2], losange[3], losange[0]])
-			draw_polyline(contour, COULEUR_TETE, 1.5, true)
+			draw_polyline(contour, COULEUR_CONTOUR_BONUS, 1.5, true)
 		TypeBonus.VIE:
 			# Croix verte (+)
 			var epaisseur := demi * 0.6
@@ -1214,9 +1361,9 @@ func _dessiner_forme_bonus(type_bonus: TypeBonus, centre: Vector2, demi: float) 
 			draw_rect(Rect2(centre.x - epaisseur * 0.5, centre.y - longueur * 0.5, epaisseur, longueur), COULEUR_VIE)
 			draw_rect(Rect2(centre.x - longueur * 0.5, centre.y - epaisseur * 0.5, longueur, epaisseur), COULEUR_VIE)
 		TypeBonus.FANTOME:
-			# Anneau violet (cercle creux) avec point central blanc
+			# Anneau violet (cercle creux) avec point central contrasté
 			draw_arc(centre, demi - 1.0, 0.0, TAU, 24, COULEUR_FANTOME, 3.0, true)
-			draw_circle(centre, 2.5, COULEUR_TETE)
+			draw_circle(centre, 2.5, COULEUR_CONTOUR_BONUS)
 		TypeBonus.COMBO_X2:
 			# Triangle doré pointé vers le haut
 			var triangle := PackedVector2Array([
@@ -1226,7 +1373,7 @@ func _dessiner_forme_bonus(type_bonus: TypeBonus, centre: Vector2, demi: float) 
 			])
 			draw_colored_polygon(triangle, COULEUR_COMBO_X2)
 			var contour_tri := PackedVector2Array([triangle[0], triangle[1], triangle[2], triangle[0]])
-			draw_polyline(contour_tri, COULEUR_TETE, 1.2, true)
+			draw_polyline(contour_tri, COULEUR_CONTOUR_BONUS, 1.2, true)
 		TypeBonus.RALENTI:
 			# Sablier rose néon (deux triangles opposés)
 			var sablier_haut := PackedVector2Array([
@@ -1241,13 +1388,13 @@ func _dessiner_forme_bonus(type_bonus: TypeBonus, centre: Vector2, demi: float) 
 			])
 			draw_colored_polygon(sablier_haut, COULEUR_RALENTI)
 			draw_colored_polygon(sablier_bas, COULEUR_RALENTI)
-			draw_polyline(PackedVector2Array([sablier_haut[0], sablier_haut[1], sablier_bas[2], sablier_bas[1], sablier_haut[0]]), COULEUR_TETE, 1.2, true)
+			draw_polyline(PackedVector2Array([sablier_haut[0], sablier_haut[1], sablier_bas[2], sablier_bas[1], sablier_haut[0]]), COULEUR_CONTOUR_BONUS, 1.2, true)
 		TypeBonus.CISEAUX:
 			# Deux lames croisées en X orange néon
 			var d := demi * 0.82
 			draw_line(centre + Vector2(-d, -d), centre + Vector2(d, d), COULEUR_CISEAUX, 3.2, true)
 			draw_line(centre + Vector2(d, -d), centre + Vector2(-d, d), COULEUR_CISEAUX, 3.2, true)
-			draw_circle(centre, 2.2, COULEUR_TETE)
+			draw_circle(centre, 2.2, COULEUR_CONTOUR_BONUS)
 
 
 func _dessiner_bonus(bonus: Dictionary) -> void:
@@ -1295,9 +1442,9 @@ func _dessiner_bouton(police: Font, action: String, rect: Rect2, label: String, 
 	var couleur_txt := COULEUR_TEXTE
 
 	if primaire:
-		fond = accent if not survole else accent.lightened(0.15)
+		fond = accent if not survole else accent.lerp(COULEUR_TEXTE_MUTED, 0.2)
 		bord = fond
-		couleur_txt = COULEUR_FOND_ARENE
+		couleur_txt = COULEUR_BOUTON_PRIM_TEXTE
 	elif survole:
 		fond = COULEUR_SURFACE_SURVOL
 		bord = accent
@@ -1334,8 +1481,8 @@ func _dessiner_serpent_s(origine: Vector2, hauteur: float, couleur_corps: Color,
 	var r_tete := epaisseur * 0.62
 	draw_circle(tete, r_tete, couleur_corps)
 	# Yeux
-	draw_circle(tete + Vector2(r_tete * 0.25, -r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_FOND_ARENE)
-	draw_circle(tete + Vector2(r_tete * 0.25, r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_FOND_ARENE)
+	draw_circle(tete + Vector2(r_tete * 0.25, -r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_OEIL)
+	draw_circle(tete + Vector2(r_tete * 0.25, r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_OEIL)
 	# Petite langue fourchue rouge
 	var base_langue := tete + Vector2(r_tete * 0.85, 0.0)
 	var pointe := base_langue + Vector2(r_tete * 0.95, 0.0)
@@ -1426,7 +1573,7 @@ func _draw() -> void:
 	if afficher_serpent:
 		for i in serpent.size():
 			var t_seg := float(i) / total_segs
-			var couleur := COULEUR_TETE if i == 0 else COULEUR_CORPS.lerp(Color("#7a7a88"), t_seg * 0.65)
+			var couleur := COULEUR_TETE if i == 0 else COULEUR_CORPS.lerp(COULEUR_CORPS_FIN, t_seg * 0.65)
 			if en_fantome:
 				couleur = couleur.lerp(COULEUR_FANTOME, 0.45)
 				couleur.a = 0.65
@@ -1436,7 +1583,7 @@ func _draw() -> void:
 			if en_fantome:
 				draw_rect(rect_segment, COULEUR_FANTOME, false, 1.5)
 			if i == 0:
-				_dessiner_yeux_serpent(rect_segment, direction, COULEUR_FOND_ARENE)
+				_dessiner_yeux_serpent(rect_segment, direction, COULEUR_OEIL)
 				if a_bouclier:
 					draw_rect(rect_segment, COULEUR_BOUCLIER, false, 2.5)
 
@@ -1502,7 +1649,7 @@ func _draw() -> void:
 
 	# 11. Écrans d'état (Pseudo, Menu Titre 2 colonnes, Classement, Pause, Game Over)
 	if etat_jeu == EtatJeu.PSEUDO:
-		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.95))
+		draw_rect(rect_arene, COULEUR_OVERLAY)
 		var hauteur_logo := 82.0
 		var largeur_logo_approx := hauteur_logo * 3.8
 		var x_logo := ORIGINE_GRILLE.x + (largeur_arene - largeur_logo_approx) * 0.5
@@ -1532,7 +1679,7 @@ func _draw() -> void:
 		_dessiner_bouton(police, "valider_pseudo", Rect2(x_box + 110.0, y_box + 86.0, 220.0, 46.0), "Entrer (Entrée)", true, COULEUR_TETE)
 
 	elif etat_jeu == EtatJeu.MENU:
-		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.92))
+		draw_rect(rect_arene, COULEUR_OVERLAY)
 
 		var x_col_g := ORIGINE_GRILLE.x + 48.0
 		var w_col_g := 360.0
@@ -1561,13 +1708,14 @@ func _draw() -> void:
 			draw_string(police, Vector2(x_col_g, y_seg + 102.0), "Meilleur score : %d" % meilleur_score,
 				HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 18, COULEUR_COMBO_X2)
 
-		# Boutons Jouer + Classement
-		var y_btn := y_top + 256.0
+		# Boutons Jouer + Classement + Thème
+		var y_btn := y_top + 252.0
 		_dessiner_bouton(police, "jouer", Rect2(x_col_g, y_btn, 180.0, 50.0), "Jouer", true, COULEUR_TETE)
 		_dessiner_bouton(police, "classement", Rect2(x_col_g + 194.0, y_btn, 150.0, 50.0), "Rangs (C)", false, COULEUR_COMBO_X2)
-		draw_string(police, Vector2(x_col_g, y_btn + 78.0), "Entrée ou Espace pour lancer", HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 13, COULEUR_TEXTE_MUTED)
+		var nom_theme: String = THEMES[index_theme]["nom"]
+		_dessiner_bouton(police, "theme", Rect2(x_col_g, y_btn + 62.0, 344.0, 38.0), "Thème : %s (T)" % nom_theme, false, COULEUR_BOUCLIER)
 		draw_string(police, Vector2(x_col_g, ORIGINE_GRILLE.y + hauteur_arene - 40.0), "Flèches / ZQSD : diriger   ·   P / Échap : pause",
-			HORIZONTAL_ALIGNMENT_LEFT, w_col_g + 80.0, 13, COULEUR_TEXTE_INACTIF.lightened(0.25))
+			HORIZONTAL_ALIGNMENT_LEFT, w_col_g + 80.0, 13, COULEUR_TEXTE_MUTED)
 
 		# Colonne droite : Panneau des consommables
 		var x_panel := ORIGINE_GRILLE.x + 448.0
@@ -1605,7 +1753,7 @@ func _draw() -> void:
 			draw_string(police, Vector2(x_txt, y_item + 17.0), item[2], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COULEUR_TEXTE_MUTED)
 
 	elif etat_jeu == EtatJeu.CLASSEMENT:
-		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.94))
+		draw_rect(rect_arene, COULEUR_OVERLAY)
 		var w_modal := 640.0
 		var h_modal := 520.0
 		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
@@ -1635,9 +1783,9 @@ func _draw() -> void:
 		for idx in max_affiches:
 			var entree: Dictionary = liste[idx]
 			var est_moi := str(entree["pseudo"]).to_lower() == pseudo_joueur.to_lower()
-			var couleur_rang := COULEUR_COMBO_X2 if idx == 0 else (Color("#d4d4d8") if idx == 1 else (Color("#fb923c") if idx == 2 else COULEUR_TEXTE_MUTED))
+			var couleur_rang := COULEUR_COMBO_X2 if idx == 0 else (COULEUR_TEXTE_MUTED if idx == 1 else (COULEUR_CISEAUX if idx == 2 else COULEUR_TEXTE_MUTED))
 			if est_moi:
-				draw_rect(Rect2(rect_modal.position.x + 24.0, y_ligne - 18.0, w_modal - 48.0, 28.0), Color(1, 1, 1, 0.06))
+				draw_rect(Rect2(rect_modal.position.x + 24.0, y_ligne - 18.0, w_modal - 48.0, 28.0), Color(COULEUR_TEXTE.r, COULEUR_TEXTE.g, COULEUR_TEXTE.b, 0.08))
 			draw_string(police, Vector2(rect_modal.position.x + 36.0, y_ligne), "#%d" % (idx + 1), HORIZONTAL_ALIGNMENT_LEFT, 56.0, 16, couleur_rang)
 			draw_string(police, Vector2(rect_modal.position.x + 96.0, y_ligne), str(entree["pseudo"]) + (" (toi)" if est_moi else ""),
 				HORIZONTAL_ALIGNMENT_LEFT, 360.0, 16, COULEUR_TETE if est_moi else COULEUR_CORPS)
@@ -1650,7 +1798,9 @@ func _draw() -> void:
 		_dessiner_bouton(police, "menu", Rect2(rect_modal.position.x + w_modal - 198.0, y_bas, 170.0, 38.0), "Retour (Échap)", true, COULEUR_TETE)
 
 	elif etat_jeu == EtatJeu.PAUSE:
-		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.78))
+		var fond_pause := COULEUR_OVERLAY
+		fond_pause.a = 0.80
+		draw_rect(rect_arene, fond_pause)
 		var w_modal := 420.0
 		var h_modal := 260.0
 		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
@@ -1669,7 +1819,9 @@ func _draw() -> void:
 		_dessiner_bouton(police, "menu", Rect2(x_btn_m + w_btn_m * 0.5 + 6.0, rect_modal.position.y + 174.0, w_btn_m * 0.5 - 6.0, 38.0), "Menu (M)", false, COULEUR_TEXTE_MUTED)
 
 	elif etat_jeu == EtatJeu.GAME_OVER:
-		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.82))
+		var fond_go := COULEUR_OVERLAY
+		fond_go.a = 0.84
+		draw_rect(rect_arene, fond_go)
 		var w_modal := 440.0
 		var h_modal := 270.0
 		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
