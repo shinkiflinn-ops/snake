@@ -917,7 +917,7 @@ func _charger_classement_local() -> void:
 	var fichier := FileAccess.open(CHEMIN_CLASSEMENT, FileAccess.READ)
 	if fichier == null:
 		return
-	var parse := JSON.parse_string(fichier.get_as_text())
+	var parse: Variant = JSON.parse_string(fichier.get_as_text())
 	if parse is Array:
 		for item in parse:
 			if item is Dictionary and item.has("pseudo"):
@@ -1013,7 +1013,7 @@ func _sur_reponse_classement(_result: int, response_code: int, _headers: PackedS
 		statut_sync_classement = "Hors-ligne (classement local)"
 		queue_redraw()
 		return
-	var data := JSON.parse_string(body.get_string_from_utf8())
+	var data: Variant = JSON.parse_string(body.get_string_from_utf8())
 	if data is Dictionary:
 		classement_joueurs.clear()
 		for k in data:
@@ -1031,7 +1031,9 @@ func _sur_reponse_classement(_result: int, response_code: int, _headers: PackedS
 
 func _obtenir_classement_trie(mode: Difficulte) -> Array[Dictionary]:
 	var cle := "difficile" if mode == Difficulte.DIFFICILE else "facile"
-	var copie: Array[Dictionary] = classement_joueurs.duplicate(true)
+	var copie: Array[Dictionary] = []
+	for item in classement_joueurs:
+		copie.append(item.duplicate())
 	copie.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var sa := int(a.get(cle, 0))
 		var sb := int(b.get(cle, 0))
@@ -1406,7 +1408,7 @@ func _draw() -> void:
 
 	# 4c. Serpents ennemis (mode Difficile)
 	for ennemi in serpents_ennemis:
-		var segs: Array[Vector2i] = ennemi["segments"]
+		var segs: Array = ennemi["segments"]
 		for k in segs.size():
 			if not _est_dans_grille(segs[k]):
 				continue
