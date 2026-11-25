@@ -33,7 +33,7 @@ const DELAI_PAS_ENNEMI := 0.095
 const LONGUEUR_SERPENT_ENNEMI := 9
 
 enum TypeBonus { BOUCLIER, VIE, FANTOME, COMBO_X2, RALENTI, CISEAUX }
-enum EtatJeu { MENU, JEU, PAUSE, GAME_OVER }
+enum EtatJeu { PSEUDO, MENU, CLASSEMENT, JEU, PAUSE, GAME_OVER }
 enum Difficulte { FACILE, DIFFICILE }
 
 # Poids d'apparition par bonus aléatoire (Ciseaux chaque 15 pts, Ralenti chaque 1 min)
@@ -66,6 +66,8 @@ const COULEUR_TEXTE := Color("#ffffff")
 const COULEUR_TEXTE_MUTED := Color("#8a8a99")
 const COULEUR_TEXTE_INACTIF := Color("#444452")
 const CHEMIN_SAUVEGARDE := "user://snake_save.cfg"
+const CHEMIN_CLASSEMENT := "user://snake_classement.json"
+const URL_FIREBASE_DB := ""  # Optionnel : URL Firebase Realtime DB pour synchro en ligne
 
 var serpent: Array[Vector2i] = []          # serpent[0] = la tête
 var direction := Vector2i.RIGHT
@@ -93,7 +95,14 @@ var meilleurs_scores := {
 	Difficulte.DIFFICILE: 0,
 }
 var nouveau_record := false
-var etat_jeu := EtatJeu.MENU
+var etat_jeu := EtatJeu.PSEUDO
+var pseudo_joueur := ""
+var saisie_pseudo := ""
+var erreur_pseudo := ""
+var classement_joueurs: Array[Dictionary] = []  # [{ "pseudo": String, "facile": int, "difficile": int }]
+var filtre_classement := Difficulte.FACILE
+var statut_sync_classement := ""
+var http_classement: HTTPRequest
 var minuteur: Timer
 var minuteur_bonus: Timer
 
@@ -137,7 +146,15 @@ func _ready() -> void:
 	police_ui = load("res://fonts/FiraMono-Bold.otf") if ResourceLoader.exists("res://fonts/FiraMono-Bold.otf") else ThemeDB.fallback_font
 	police_titre = load("res://fonts/FiraSansCondensed-Heavy.otf") if ResourceLoader.exists("res://fonts/FiraSansCondensed-Heavy.otf") else police_ui
 	_charger_meilleur_score()
+	_charger_classement_local()
 	_initialiser_audio()
+
+	http_classement = HTTPRequest.new()
+	http_classement.request_completed.connect(_sur_reponse_classement)
+	add_child(http_classement)
+	if URL_FIREBASE_DB != "":
+		_rafraichir_classement_en_ligne()
+
 	minuteur = Timer.new()
 	minuteur.timeout.connect(_avancer)
 	add_child(minuteur)
@@ -149,14 +166,14 @@ func _ready() -> void:
 
 	_reinitialiser_serpent()
 	_placer_nourriture()
-	etat_jeu = EtatJeu.MENU
+	etat_jeu = EtatJeu.PSEUDO if pseudo_joueur.is_empty() else EtatJeu.MENU
 	_maj_volume_musique()
 	queue_redraw()
 
 
 func _process(delta: float) -> void:
 	temps_animation += delta
-	var modifie := etat_jeu == EtatJeu.JEU or etat_jeu == EtatJeu.MENU
+	var modifie := etat_jeu == EtatJeu.JEU or etat_jeu == EtatJeu.MENU or etat_jeu == EtatJeu.PSEUDO
 
 	# 1. Expiration / clignotement des bonus, cooldown des vies et durées des pouvoirs actifs
 	if etat_jeu == EtatJeu.JEU:
@@ -432,6 +449,8 @@ func _retourner_au_menu() -> void:
 
 func _executer_action_ui(action: String) -> void:
 	match action:
+		"valider_pseudo":
+			_valider_pseudo()
 		"facile":
 			if difficulte != Difficulte.FACILE:
 				difficulte = Difficulte.FACILE
@@ -444,6 +463,25 @@ func _executer_action_ui(action: String) -> void:
 				meilleur_score = int(meilleurs_scores[difficulte])
 				_jouer_son(son_demarrer, 1.15)
 				queue_redraw()
+		"classement":
+			filtre_classement = difficulte
+			etat_jeu = EtatJeu.CLASSEMENT
+			survol_action = ""
+			_actualiser_classement()
+			_jouer_son(son_demarrer, 1.05)
+			queue_redraw()
+		"classement_facile":
+			filtre_classement = Difficulte.FACILE
+			_jouer_son(son_demarrer, 0.9)
+			queue_redraw()
+		"classement_difficile":
+			filtre_classement = Difficulte.DIFFICILE
+			_jouer_son(son_demarrer, 1.15)
+			queue_redraw()
+		"actualiser_classement":
+			_actualiser_classement()
+			_jouer_son(son_demarrer, 1.1)
+			queue_redraw()
 		"jouer", "rejouer":
 			minuteur.paused = false
 			minuteur_bonus.paused = false
@@ -477,17 +515,51 @@ func _unhandled_input(evenement: InputEvent) -> void:
 	if not (evenement is InputEventKey and evenement.pressed and not evenement.echo):
 		return
 
+	if etat_jeu == EtatJeu.PSEUDO:
+		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_KP_ENTER:
+			_valider_pseudo()
+			return
+		if evenement.keycode == KEY_BACKSPACE:
+			if not saisie_pseudo.is_empty():
+				saisie_pseudo = saisie_pseudo.left(saisie_pseudo.length() - 1)
+				erreur_pseudo = ""
+				queue_redraw()
+			return
+		if evenement.unicode >= 32 and saisie_pseudo.length() < 14:
+			var ch := String.chr(evenement.unicode)
+			if ch.is_valid_identifier() or ch in ["-", "_"] or (ch >= "0" and ch <= "9"):
+				saisie_pseudo += ch
+				erreur_pseudo = ""
+				queue_redraw()
+		return
+
 	if etat_jeu == EtatJeu.MENU:
 		if evenement.physical_keycode in [KEY_LEFT, KEY_A, KEY_RIGHT, KEY_D]:
 			_executer_action_ui("difficile" if difficulte == Difficulte.FACILE else "facile")
+			return
+		if evenement.physical_keycode == KEY_C:
+			_executer_action_ui("classement")
 			return
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
 			_executer_action_ui("jouer")
 		return
 
+	if etat_jeu == EtatJeu.CLASSEMENT:
+		if evenement.physical_keycode in [KEY_LEFT, KEY_A, KEY_RIGHT, KEY_D]:
+			_executer_action_ui("classement_difficile" if filtre_classement == Difficulte.FACILE else "classement_facile")
+			return
+		if evenement.physical_keycode == KEY_R:
+			_executer_action_ui("actualiser_classement")
+			return
+		if evenement.keycode == KEY_ESCAPE or evenement.physical_keycode == KEY_M or evenement.keycode == KEY_ENTER:
+			_executer_action_ui("menu")
+		return
+
 	if etat_jeu == EtatJeu.GAME_OVER:
 		if evenement.keycode == KEY_ENTER or evenement.keycode == KEY_SPACE:
 			_executer_action_ui("rejouer")
+		elif evenement.physical_keycode == KEY_C:
+			_executer_action_ui("classement")
 		elif evenement.physical_keycode == KEY_M:
 			_executer_action_ui("menu")
 		return
@@ -824,6 +896,7 @@ func _placer_nourriture() -> void:
 func _charger_meilleur_score() -> void:
 	var config := ConfigFile.new()
 	if config.load(CHEMIN_SAUVEGARDE) == OK:
+		pseudo_joueur = str(config.get_value("joueur", "pseudo", "")).strip_edges()
 		meilleurs_scores[Difficulte.FACILE] = int(config.get_value("scores", "facile", config.get_value("scores", "meilleur", 0)))
 		meilleurs_scores[Difficulte.DIFFICILE] = int(config.get_value("scores", "difficile", 0))
 	meilleur_score = int(meilleurs_scores[difficulte])
@@ -831,9 +904,142 @@ func _charger_meilleur_score() -> void:
 
 func _sauvegarder_meilleur_score() -> void:
 	var config := ConfigFile.new()
+	config.set_value("joueur", "pseudo", pseudo_joueur)
 	config.set_value("scores", "facile", meilleurs_scores[Difficulte.FACILE])
 	config.set_value("scores", "difficile", meilleurs_scores[Difficulte.DIFFICILE])
 	config.save(CHEMIN_SAUVEGARDE)
+
+
+func _charger_classement_local() -> void:
+	classement_joueurs.clear()
+	if not FileAccess.file_exists(CHEMIN_CLASSEMENT):
+		return
+	var fichier := FileAccess.open(CHEMIN_CLASSEMENT, FileAccess.READ)
+	if fichier == null:
+		return
+	var parse := JSON.parse_string(fichier.get_as_text())
+	if parse is Array:
+		for item in parse:
+			if item is Dictionary and item.has("pseudo"):
+				classement_joueurs.append({
+					"pseudo": str(item["pseudo"]),
+					"facile": int(item.get("facile", 0)),
+					"difficile": int(item.get("difficile", 0)),
+				})
+
+
+func _sauvegarder_classement_local() -> void:
+	var fichier := FileAccess.open(CHEMIN_CLASSEMENT, FileAccess.WRITE)
+	if fichier != null:
+		fichier.store_string(JSON.stringify(classement_joueurs))
+
+
+func _pseudo_existe(nom: String) -> bool:
+	var cible := nom.to_lower()
+	for entry in classement_joueurs:
+		if str(entry["pseudo"]).to_lower() == cible:
+			return true
+	return false
+
+
+func _valider_pseudo() -> void:
+	var candidat := saisie_pseudo.strip_edges()
+	if candidat.length() < 3:
+		erreur_pseudo = "3 caractères minimum."
+		_jouer_son(son_degat, 1.2)
+		queue_redraw()
+		return
+	if _pseudo_existe(candidat):
+		erreur_pseudo = "Ce pseudo est déjà pris !"
+		_jouer_son(son_degat, 1.2)
+		queue_redraw()
+		return
+
+	pseudo_joueur = candidat
+	erreur_pseudo = ""
+	_sauvegarder_meilleur_score()
+	_mettre_a_jour_score_classement()
+	_jouer_son(son_vie)
+	etat_jeu = EtatJeu.MENU
+	queue_redraw()
+
+
+func _mettre_a_jour_score_classement() -> void:
+	if pseudo_joueur.is_empty():
+		return
+	var trouve := false
+	for entry in classement_joueurs:
+		if str(entry["pseudo"]).to_lower() == pseudo_joueur.to_lower():
+			entry["facile"] = maxi(int(entry["facile"]), int(meilleurs_scores[Difficulte.FACILE]))
+			entry["difficile"] = maxi(int(entry["difficile"]), int(meilleurs_scores[Difficulte.DIFFICILE]))
+			trouve = true
+			break
+	if not trouve:
+		classement_joueurs.append({
+			"pseudo": pseudo_joueur,
+			"facile": int(meilleurs_scores[Difficulte.FACILE]),
+			"difficile": int(meilleurs_scores[Difficulte.DIFFICILE]),
+		})
+	_sauvegarder_classement_local()
+	if URL_FIREBASE_DB != "" and http_classement != null:
+		var url := "%s/joueurs/%s.json" % [URL_FIREBASE_DB.trim_suffix("/"), pseudo_joueur.to_lower().uri_encode()]
+		var payload := JSON.stringify({
+			"pseudo": pseudo_joueur,
+			"facile": int(meilleurs_scores[Difficulte.FACILE]),
+			"difficile": int(meilleurs_scores[Difficulte.DIFFICILE]),
+		})
+		http_classement.request(url, ["Content-Type: application/json"], HTTPClient.METHOD_PUT, payload)
+
+
+func _actualiser_classement() -> void:
+	_charger_classement_local()
+	_mettre_a_jour_score_classement()
+	if URL_FIREBASE_DB != "":
+		_rafraichir_classement_en_ligne()
+	else:
+		statut_sync_classement = "Classement local à jour (%d joueur%s)" % [classement_joueurs.size(), "s" if classement_joueurs.size() > 1 else ""]
+
+
+func _rafraichir_classement_en_ligne() -> void:
+	if URL_FIREBASE_DB == "" or http_classement == null:
+		return
+	statut_sync_classement = "Actualisation..."
+	var url := "%s/joueurs.json" % URL_FIREBASE_DB.trim_suffix("/")
+	http_classement.request(url)
+
+
+func _sur_reponse_classement(_result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if response_code != 200:
+		statut_sync_classement = "Hors-ligne (classement local)"
+		queue_redraw()
+		return
+	var data := JSON.parse_string(body.get_string_from_utf8())
+	if data is Dictionary:
+		classement_joueurs.clear()
+		for k in data:
+			var item = data[k]
+			if item is Dictionary and item.has("pseudo"):
+				classement_joueurs.append({
+					"pseudo": str(item["pseudo"]),
+					"facile": int(item.get("facile", 0)),
+					"difficile": int(item.get("difficile", 0)),
+				})
+		_sauvegarder_classement_local()
+		statut_sync_classement = "Synchronisé (%d joueurs)" % classement_joueurs.size()
+		queue_redraw()
+
+
+func _obtenir_classement_trie(mode: Difficulte) -> Array[Dictionary]:
+	var cle := "difficile" if mode == Difficulte.DIFFICILE else "facile"
+	var copie: Array[Dictionary] = classement_joueurs.duplicate(true)
+	copie.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var sa := int(a.get(cle, 0))
+		var sb := int(b.get(cle, 0))
+		if sa == sb:
+			return str(a["pseudo"]).naturalnocasecmp_to(str(b["pseudo"])) < 0
+		return sa > sb
+	)
+	return copie
 
 
 func _verifier_record() -> void:
@@ -847,6 +1053,9 @@ func _finir_partie() -> void:
 	_verifier_record()
 	if nouveau_record:
 		_sauvegarder_meilleur_score()
+	_mettre_a_jour_score_classement()
+	if URL_FIREBASE_DB != "":
+		_rafraichir_classement_en_ligne()
 	etat_jeu = EtatJeu.GAME_OVER
 	minuteur.stop()
 	minuteur_bonus.stop()
@@ -1097,6 +1306,54 @@ func _dessiner_bouton(police: Font, action: String, rect: Rect2, label: String, 
 		HORIZONTAL_ALIGNMENT_CENTER, rect.size.x, 16, couleur_txt)
 
 
+func _dessiner_serpent_s(origine: Vector2, hauteur: float, couleur_corps: Color, decalage_phase: float) -> void:
+	# Dessine un "S" en forme de serpent sinueux (queue en bas, tête avec yeux et langue en haut)
+	var largeur := hauteur * 0.56
+	var epaisseur := hauteur * 0.17
+	var pts := PackedVector2Array()
+	var nb := 22
+	for i in range(nb + 1):
+		var t := float(i) / float(nb)
+		# t = 0 (bas/queue) -> t = 1 (haut/tête)
+		var y := lerpf(hauteur, 0.0, t)
+		var x := largeur * 0.5 + sin(t * TAU * 0.95 - PI * 0.4) * (largeur * 0.42)
+		var ondulation := sin(temps_animation * 3.2 + decalage_phase + t * 4.0) * 1.4
+		pts.append(origine + Vector2(x + ondulation, y))
+
+	# Corps du serpent (légèrement plus fin vers la queue)
+	for i in range(pts.size() - 1):
+		var ratio := float(i) / float(pts.size() - 1)
+		var w := lerpf(epaisseur * 0.48, epaisseur, ratio)
+		draw_line(pts[i], pts[i + 1], couleur_corps, w, true)
+		draw_circle(pts[i + 1], w * 0.5, couleur_corps)
+
+	# Tête en haut du S
+	var tete: Vector2 = pts[pts.size() - 1]
+	var r_tete := epaisseur * 0.62
+	draw_circle(tete, r_tete, couleur_corps)
+	# Yeux
+	draw_circle(tete + Vector2(r_tete * 0.25, -r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_FOND_ARENE)
+	draw_circle(tete + Vector2(r_tete * 0.25, r_tete * 0.28), maxf(1.5, r_tete * 0.24), COULEUR_FOND_ARENE)
+	# Petite langue fourchue rouge
+	var base_langue := tete + Vector2(r_tete * 0.85, 0.0)
+	var pointe := base_langue + Vector2(r_tete * 0.95, 0.0)
+	draw_line(base_langue, pointe, COULEUR_CONSOMMABLE, 1.8, true)
+	draw_line(pointe, pointe + Vector2(r_tete * 0.45, -r_tete * 0.32), COULEUR_CONSOMMABLE, 1.5, true)
+	draw_line(pointe, pointe + Vector2(r_tete * 0.45, r_tete * 0.32), COULEUR_CONSOMMABLE, 1.5, true)
+
+
+func _dessiner_logo_sssnake(titre_font: Font, pos_haut_gauche: Vector2, hauteur_s: float) -> void:
+	var largeur_s := hauteur_s * 0.56
+	var espacement_s := largeur_s + hauteur_s * 0.12
+	_dessiner_serpent_s(pos_haut_gauche, hauteur_s, COULEUR_TETE, 0.0)
+	_dessiner_serpent_s(pos_haut_gauche + Vector2(espacement_s, 0.0), hauteur_s, COULEUR_CORPS, 1.2)
+	_dessiner_serpent_s(pos_haut_gauche + Vector2(espacement_s * 2.0, 0.0), hauteur_s, COULEUR_CONSOMMABLE, 2.4)
+	var x_nake := pos_haut_gauche.x + espacement_s * 3.0 + hauteur_s * 0.06
+	var taille_police := int(hauteur_s * 1.18)
+	draw_string(titre_font, Vector2(x_nake, pos_haut_gauche.y + hauteur_s * 0.96), "nake",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, taille_police, COULEUR_TETE)
+
+
 func _draw() -> void:
 	zones_cliquables.clear()
 	var largeur_arene := COLONNES * TAILLE_CASE
@@ -1205,7 +1462,7 @@ func _draw() -> void:
 		draw_rect(rect_arene, c_flash)
 
 	# 9. Bordure nette autour de l'arène
-	draw_rect(rect_arene, COULEUR_BORDURE_SUBTILE if etat_jeu == EtatJeu.MENU else COULEUR_BORDURE, false, 2.0)
+	draw_rect(rect_arene, COULEUR_BORDURE_SUBTILE if etat_jeu in [EtatJeu.MENU, EtatJeu.PSEUDO, EtatJeu.CLASSEMENT] else COULEUR_BORDURE, false, 2.0)
 
 	# Remise à zéro de la transformation pour que le HUD reste stable
 	draw_set_transform(Vector2.ZERO)
@@ -1241,21 +1498,51 @@ func _draw() -> void:
 	if temps_ralenti > 0.0:
 		curseur_droite -= _dessiner_badge_hud(police, Vector2(curseur_droite, 32.0), "Ralenti %.0fs" % ceilf(temps_ralenti), COULEUR_RALENTI)
 
-	# 11. Écrans d'état (Menu Titre 2 colonnes, Pause, Game Over)
-	if etat_jeu == EtatJeu.MENU:
+	# 11. Écrans d'état (Pseudo, Menu Titre 2 colonnes, Classement, Pause, Game Over)
+	if etat_jeu == EtatJeu.PSEUDO:
+		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.95))
+		var hauteur_logo := 82.0
+		var largeur_logo_approx := hauteur_logo * 3.8
+		var x_logo := ORIGINE_GRILLE.x + (largeur_arene - largeur_logo_approx) * 0.5
+		var y_logo := ORIGINE_GRILLE.y + 150.0
+		_dessiner_logo_sssnake(titre_font, Vector2(x_logo, y_logo), hauteur_logo)
+		draw_string(police, Vector2(ORIGINE_GRILLE.x, y_logo + hauteur_logo + 44.0), "Édition Néon  ·  Arcade",
+			HORIZONTAL_ALIGNMENT_CENTER, largeur_arene, 16, COULEUR_TEXTE_MUTED)
+
+		# Zone de saisie du pseudo en bas de l'écran
+		var w_box := 440.0
+		var x_box := ORIGINE_GRILLE.x + (largeur_arene - w_box) * 0.5
+		var y_box := ORIGINE_GRILLE.y + hauteur_arene - 205.0
+		draw_string(police, Vector2(x_box, y_box - 14.0), "Choisis ton pseudo unique pour le classement",
+			HORIZONTAL_ALIGNMENT_CENTER, w_box, 15, COULEUR_TEXTE)
+
+		var rect_input := Rect2(x_box, y_box, w_box, 48.0)
+		draw_rect(rect_input, COULEUR_SURFACE_UI)
+		draw_rect(rect_input, COULEUR_CONSOMMABLE if not erreur_pseudo.is_empty() else COULEUR_BORDURE, false, 1.5)
+		var curseur := "_" if int(temps_animation * 2.5) % 2 == 0 else ""
+		var texte_affiche := saisie_pseudo + curseur if not saisie_pseudo.is_empty() else ("Ton pseudo..." + curseur)
+		var couleur_saisie := COULEUR_TEXTE if not saisie_pseudo.is_empty() else COULEUR_TEXTE_INACTIF.lightened(0.3)
+		draw_string(police, Vector2(x_box + 16.0, y_box + 31.0), texte_affiche, HORIZONTAL_ALIGNMENT_LEFT, w_box - 32.0, 20, couleur_saisie)
+
+		if not erreur_pseudo.is_empty():
+			draw_string(police, Vector2(x_box, y_box + 70.0), erreur_pseudo, HORIZONTAL_ALIGNMENT_CENTER, w_box, 14, COULEUR_CONSOMMABLE)
+
+		_dessiner_bouton(police, "valider_pseudo", Rect2(x_box + 110.0, y_box + 86.0, 220.0, 46.0), "Entrer (Entrée)", true, COULEUR_TETE)
+
+	elif etat_jeu == EtatJeu.MENU:
 		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.92))
 
 		var x_col_g := ORIGINE_GRILLE.x + 48.0
 		var w_col_g := 360.0
-		var y_top := ORIGINE_GRILLE.y + 84.0
+		var y_top := ORIGINE_GRILLE.y + 62.0
 
-		# Colonne gauche : Identité, Sélecteur de difficulté, Action principale
-		draw_string(titre_font, Vector2(x_col_g, y_top), "SNAKE", HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 76, COULEUR_TETE)
-		draw_rect(Rect2(x_col_g, y_top + 14.0, 44.0, 4.0), COULEUR_CONSOMMABLE)
-		draw_string(police, Vector2(x_col_g + 56.0, y_top + 22.0), "Édition Néon", HORIZONTAL_ALIGNMENT_LEFT, -1, 16, COULEUR_TEXTE_MUTED)
+		# Colonne gauche : Logo SSSnake, Joueur, Difficulté, Actions
+		_dessiner_logo_sssnake(titre_font, Vector2(x_col_g, y_top), 56.0)
+		draw_rect(Rect2(x_col_g, y_top + 74.0, 44.0, 4.0), COULEUR_CONSOMMABLE)
+		draw_string(police, Vector2(x_col_g + 56.0, y_top + 82.0), "Joueur : %s" % pseudo_joueur, HORIZONTAL_ALIGNMENT_LEFT, -1, 15, COULEUR_TEXTE_MUTED)
 
 		# Segmented control cliquable pour la difficulté
-		var y_seg := y_top + 76.0
+		var y_seg := y_top + 116.0
 		var w_seg := 320.0
 		var h_seg := 42.0
 		draw_rect(Rect2(x_col_g, y_seg, w_seg, h_seg), COULEUR_SURFACE_UI)
@@ -1269,12 +1556,13 @@ func _draw() -> void:
 		draw_string(police, Vector2(x_col_g, y_seg + 68.0), desc_mode, HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 14, COULEUR_TEXTE_MUTED)
 
 		if meilleur_score > 0:
-			draw_string(police, Vector2(x_col_g, y_seg + 104.0), "Meilleur score : %d" % meilleur_score,
+			draw_string(police, Vector2(x_col_g, y_seg + 102.0), "Meilleur score : %d" % meilleur_score,
 				HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 18, COULEUR_COMBO_X2)
 
-		# Bouton principal Jouer
-		var y_btn := y_top + 246.0
-		_dessiner_bouton(police, "jouer", Rect2(x_col_g, y_btn, 220.0, 50.0), "Jouer", true, COULEUR_TETE)
+		# Boutons Jouer + Classement
+		var y_btn := y_top + 256.0
+		_dessiner_bouton(police, "jouer", Rect2(x_col_g, y_btn, 180.0, 50.0), "Jouer", true, COULEUR_TETE)
+		_dessiner_bouton(police, "classement", Rect2(x_col_g + 194.0, y_btn, 150.0, 50.0), "Rangs (C)", false, COULEUR_COMBO_X2)
 		draw_string(police, Vector2(x_col_g, y_btn + 78.0), "Entrée ou Espace pour lancer", HORIZONTAL_ALIGNMENT_LEFT, w_col_g, 13, COULEUR_TEXTE_MUTED)
 		draw_string(police, Vector2(x_col_g, ORIGINE_GRILLE.y + hauteur_arene - 40.0), "Flèches / ZQSD : diriger   ·   P / Échap : pause",
 			HORIZONTAL_ALIGNMENT_LEFT, w_col_g + 80.0, 13, COULEUR_TEXTE_INACTIF.lightened(0.25))
@@ -1313,6 +1601,51 @@ func _draw() -> void:
 			_dessiner_forme_bonus(item[0], Vector2(x_ico, y_item), demi_ico)
 			draw_string(police, Vector2(x_txt, y_item - 2.0), item[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 15, item[3])
 			draw_string(police, Vector2(x_txt, y_item + 17.0), item[2], HORIZONTAL_ALIGNMENT_LEFT, -1, 13, COULEUR_TEXTE_MUTED)
+
+	elif etat_jeu == EtatJeu.CLASSEMENT:
+		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.94))
+		var w_modal := 640.0
+		var h_modal := 520.0
+		var rect_modal := Rect2(ORIGINE_GRILLE.x + (largeur_arene - w_modal) * 0.5, ORIGINE_GRILLE.y + (hauteur_arene - h_modal) * 0.5, w_modal, h_modal)
+		draw_rect(rect_modal, COULEUR_SURFACE_UI)
+		draw_rect(rect_modal, COULEUR_BORDURE_SUBTILE, false, 1.5)
+
+		draw_string(titre_font, Vector2(rect_modal.position.x + 28.0, rect_modal.position.y + 52.0), "CLASSEMENT",
+			HORIZONTAL_ALIGNMENT_LEFT, 320.0, 38, COULEUR_TETE)
+		draw_string(police, Vector2(rect_modal.position.x + 28.0, rect_modal.position.y + 76.0), statut_sync_classement,
+			HORIZONTAL_ALIGNMENT_LEFT, 360.0, 13, COULEUR_TEXTE_MUTED)
+
+		# Onglets Facile / Difficile
+		var x_tabs := rect_modal.position.x + w_modal - 260.0
+		var y_tabs := rect_modal.position.y + 24.0
+		_dessiner_bouton(police, "classement_facile", Rect2(x_tabs, y_tabs, 112.0, 36.0), "Facile", filtre_classement == Difficulte.FACILE, COULEUR_VIE)
+		_dessiner_bouton(police, "classement_difficile", Rect2(x_tabs + 120.0, y_tabs, 112.0, 36.0), "Difficile", filtre_classement == Difficulte.DIFFICILE, COULEUR_ENNEMI_TETE)
+
+		draw_line(Vector2(rect_modal.position.x + 28.0, rect_modal.position.y + 92.0), Vector2(rect_modal.position.x + w_modal - 28.0, rect_modal.position.y + 92.0), COULEUR_BORDURE_SUBTILE, 1.0)
+
+		var liste := _obtenir_classement_trie(filtre_classement)
+		var cle_mode := "difficile" if filtre_classement == Difficulte.DIFFICILE else "facile"
+		var y_ligne := rect_modal.position.y + 124.0
+		var max_affiches := mini(10, liste.size())
+		if max_affiches == 0:
+			draw_string(police, Vector2(rect_modal.position.x, y_ligne + 80.0), "Aucun score enregistré.",
+				HORIZONTAL_ALIGNMENT_CENTER, w_modal, 16, COULEUR_TEXTE_MUTED)
+		for idx in max_affiches:
+			var entree: Dictionary = liste[idx]
+			var est_moi := str(entree["pseudo"]).to_lower() == pseudo_joueur.to_lower()
+			var couleur_rang := COULEUR_COMBO_X2 if idx == 0 else (Color("#d4d4d8") if idx == 1 else (Color("#fb923c") if idx == 2 else COULEUR_TEXTE_MUTED))
+			if est_moi:
+				draw_rect(Rect2(rect_modal.position.x + 24.0, y_ligne - 18.0, w_modal - 48.0, 28.0), Color(1, 1, 1, 0.06))
+			draw_string(police, Vector2(rect_modal.position.x + 36.0, y_ligne), "#%d" % (idx + 1), HORIZONTAL_ALIGNMENT_LEFT, 56.0, 16, couleur_rang)
+			draw_string(police, Vector2(rect_modal.position.x + 96.0, y_ligne), str(entree["pseudo"]) + (" (toi)" if est_moi else ""),
+				HORIZONTAL_ALIGNMENT_LEFT, 360.0, 16, COULEUR_TETE if est_moi else COULEUR_CORPS)
+			draw_string(police, Vector2(rect_modal.position.x + w_modal - 140.0, y_ligne), "%d" % int(entree.get(cle_mode, 0)),
+				HORIZONTAL_ALIGNMENT_RIGHT, 104.0, 16, couleur_rang if idx < 3 else COULEUR_TEXTE)
+			y_ligne += 32.0
+
+		var y_bas := rect_modal.position.y + h_modal - 62.0
+		_dessiner_bouton(police, "actualiser_classement", Rect2(rect_modal.position.x + 28.0, y_bas, 170.0, 38.0), "Actualiser (R)", false, COULEUR_BOUCLIER)
+		_dessiner_bouton(police, "menu", Rect2(rect_modal.position.x + w_modal - 198.0, y_bas, 170.0, 38.0), "Retour (Échap)", true, COULEUR_TETE)
 
 	elif etat_jeu == EtatJeu.PAUSE:
 		draw_rect(rect_arene, Color(0.02, 0.02, 0.03, 0.78))
@@ -1355,4 +1688,5 @@ func _draw() -> void:
 		var x_btn_go := rect_modal.position.x + 40.0
 		var w_btn_go := w_modal - 80.0
 		_dessiner_bouton(police, "rejouer", Rect2(x_btn_go, rect_modal.position.y + 160.0, w_btn_go, 44.0), "Rejouer (Entrée)", true, COULEUR_TETE)
-		_dessiner_bouton(police, "menu", Rect2(x_btn_go, rect_modal.position.y + 212.0, w_btn_go, 36.0), "Menu principal (M)", false, COULEUR_TEXTE_MUTED)
+		_dessiner_bouton(police, "classement", Rect2(x_btn_go, rect_modal.position.y + 212.0, w_btn_go * 0.5 - 6.0, 36.0), "Rangs (C)", false, COULEUR_COMBO_X2)
+		_dessiner_bouton(police, "menu", Rect2(x_btn_go + w_btn_go * 0.5 + 6.0, rect_modal.position.y + 212.0, w_btn_go * 0.5 - 6.0, 36.0), "Menu (M)", false, COULEUR_TEXTE_MUTED)
